@@ -356,6 +356,17 @@ body {
  * takes taps, because on iOS a fresh gesture is sometimes the only thing that
  * restarts recognition.
  */
+/*
+ * Listening over the network rather than on the device. Not a fault — plenty
+ * of browsers only offer the one — so it is dimmed rather than alarming. It is
+ * here because a round-trip and a bad microphone feel identical from the
+ * player's side, and one of them is worth knowing about.
+ */
+.mic-state.remote .mic-dot {
+  background: #c8a24a;
+  box-shadow: 0 0 10px rgba(200, 162, 74, 0.55);
+}
+
 .mic-state.deaf {
   pointer-events: auto;
   color: #ff8a78;

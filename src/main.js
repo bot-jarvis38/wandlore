@@ -11,7 +11,9 @@ import { Dementor, Armour, Pixie } from './enemies.js'
 import {
   PREFIX_COVER,
   VoiceListener,
+  engine,
   prefixMatch,
+  prepareLocalEngine,
   scoreUtterance,
   speechSupported,
   thresholdFor,
@@ -184,7 +186,9 @@ class Game {
       antialias: window.devicePixelRatio < 2,
       powerPreference: 'high-performance',
     })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // Where the resolution starts. It does not stay here — see `tuneQuality`.
+    this.pixelRatio = Math.min(window.devicePixelRatio, 2)
+    this.renderer.setPixelRatio(this.pixelRatio)
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
@@ -249,6 +253,56 @@ class Game {
     this.camera.updateProjectionMatrix()
   }
 
+  /**
+   * Render at whatever resolution this particular phone can actually hold 60 at.
+   *
+   * The lag is pixels, not logic: a modern phone reports a device pixel ratio
+   * of 3, and every one of those pixels goes through a bloom pass that blurs
+   * the frame five times over. Guessing a safe number for "a phone" is how you
+   * end up soft on a good device and still stuttering on a bad one, so this
+   * measures instead — drop a notch when frames run long, and climb back when
+   * there is room to spare.
+   *
+   * Only ever moves on a sustained run of frames, so one hitch (a wave
+   * spawning, a garbage collection) cannot knock the resolution down.
+   */
+  tuneQuality(dt) {
+    const q = this._q ?? (this._q = { slow: 0, fast: 0, floor: 0.75, lifted: 0 })
+    const ms = dt * 1000
+
+    if (ms > 20.5) {
+      q.slow++
+      q.fast = 0
+    } else if (ms < 15) {
+      q.fast++
+      q.slow = 0
+    } else {
+      return
+    }
+
+    if (q.slow >= 45 && this.pixelRatio > q.floor) {
+      this.setPixelRatio(Math.max(q.floor, this.pixelRatio - 0.25))
+      q.slow = 0
+      return
+    }
+    // Climbing back is rationed. Without a cap a device sitting right on the
+    // boundary oscillates between two resolutions forever, which is more
+    // distracting than simply running at the lower one.
+    const ceiling = Math.min(window.devicePixelRatio, 2)
+    if (q.fast >= 240 && this.pixelRatio < ceiling && q.lifted < 2) {
+      this.setPixelRatio(Math.min(ceiling, this.pixelRatio + 0.25))
+      q.lifted++
+      q.fast = 0
+    }
+  }
+
+  setPixelRatio(next) {
+    if (next === this.pixelRatio) return
+    this.pixelRatio = next
+    this.renderer.setPixelRatio(next)
+    this.resize()
+  }
+
   bindInput() {
     const el = this.canvas
     let dragging = false
@@ -285,7 +339,7 @@ class Game {
       this.voice.lastHeardAt = performance.now()
       this._micDeaf = false
       ui.micState.classList.remove('deaf')
-      ui.micText.textContent = 'LISTENING'
+      ui.micText.textContent = this.micLabel()
     })
     window.addEventListener('keydown', e => {
       if (e.code === 'Space') {
@@ -652,12 +706,18 @@ class Game {
         ui.permissionRetry.classList.remove('hidden')
         return
       }
+      // Done here rather than at load because the language-pack download wants
+      // a user gesture, and the tap that granted the mic is the one we have.
+      ui.permissionStatus.textContent = 'Waking the castle…'
+      await prepareLocalEngine(() => {
+        ui.permissionStatus.textContent = 'Learning your voice — one-time download…'
+      })
       this.voice.start()
     }
 
     ui.castButton.classList.toggle('hidden', !this.silentMode)
     ui.micState.classList.toggle('muted', this.silentMode)
-    ui.micText.textContent = this.silentMode ? 'SILENT' : 'LISTENING'
+    ui.micText.textContent = this.silentMode ? 'SILENT' : this.micLabel()
 
     this.resetRun()
     this.runStartedAt = performance.now()
@@ -697,11 +757,27 @@ class Game {
     ui.score.textContent = this.score.toLocaleString()
   }
 
+  /**
+   * The mic pill says WHERE the listening happens. "Sometimes it's fast and
+   * sometimes it isn't" is exactly what a network round-trip feels like, and
+   * from inside the game there is no way to tell that apart from a bad mic.
+   */
+  micLabel() {
+    // Three states, not two. A browser that won't say where it listens gets a
+    // plain label — claiming "via net" there would be asserting something
+    // nobody checked, which is the same sin as the lag it is meant to explain.
+    if (engine.mode === 'local') return 'LISTENING · ON DEVICE'
+    if (engine.mode === 'network') return 'LISTENING · VIA NET'
+    return 'LISTENING'
+  }
+
   onVoiceState(state) {
     if (this.silentMode) return
+    const where = this.micLabel()
     ui.micText.textContent =
-      state === 'listening' ? 'LISTENING' : state === 'denied' ? 'MUTED' : 'RE-LISTENING'
+      state === 'listening' ? where : state === 'denied' ? 'MUTED' : 'RE-LISTENING'
     ui.micState.classList.toggle('muted', state === 'denied')
+    ui.micState.classList.toggle('remote', engine.mode === 'network')
   }
 
   /**
@@ -716,7 +792,7 @@ class Game {
     if (deaf === this._micDeaf) return
     this._micDeaf = deaf
     ui.micState.classList.toggle('deaf', deaf)
-    ui.micText.textContent = deaf ? 'MIC ASLEEP — TAP' : 'LISTENING'
+    ui.micText.textContent = deaf ? 'MIC ASLEEP — TAP' : this.micLabel()
     if (deaf) {
       // Kick it ourselves as well as offering the tap; on iOS Safari the
       // engine ends after every utterance and occasionally never comes back.
@@ -728,8 +804,13 @@ class Game {
   /* ── frame ───────────────────────────────────────────────────────── */
 
   frame() {
-    const dt = Math.min(0.05, this.clock.getDelta())
+    const raw = this.clock.getDelta()
+    const dt = Math.min(0.05, raw)
     const t = this.clock.elapsedTime
+
+    // Judged on the real delta, not the clamped one — the clamp exists to keep
+    // physics sane through a stall, and a stall is precisely what needs seeing.
+    this.tuneQuality(raw)
 
     this.world.update(t)
     this.particles.update(dt)
@@ -821,6 +902,9 @@ const game = new Game()
 // Exposed so tools/probe-cast.mjs can drive a spoken utterance headlessly —
 // a cast cycle is otherwise only reachable by speaking into a real phone.
 window.__game = game
+// Which speech engine we ended up on, readable from a probe and from a phone's
+// dev console — the one question you cannot answer by looking at the game.
+window.__voice = { engine }
 game.frame()
 
 $('start-button').addEventListener('click', () => game.begin(true))

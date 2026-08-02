@@ -15,6 +15,57 @@ const SpeechRecognition =
 
 export const speechSupported = Boolean(SpeechRecognition)
 
+const LANG = 'en-US'
+const LOCAL_OPTIONS = { langs: [LANG], processLocally: true }
+
+/**
+ * Where the listening actually happens. Not a guess — set from what the
+ * browser reports, and shown to the player, because "sometimes it's fast and
+ * sometimes it isn't" is exactly what a network round-trip feels like and the
+ * player deserves to be able to see which one they got.
+ *
+ *   'local'   — recognised on the device, no audio leaves it
+ *   'network' — audio is streamed to the vendor's servers and back
+ *   'unknown' — the browser doesn't say (every engine before Chrome 139)
+ */
+export const engine = { mode: 'unknown', detail: '' }
+
+/**
+ * Ask for on-device recognition, downloading the language pack if the browser
+ * has one to offer.
+ *
+ * Worth the trouble because the round-trip is the whole latency problem: a
+ * general dictation service hears you, ships the audio off, and answers when
+ * it answers. On-device it is milliseconds and works on a bad connection.
+ * Call it from a user gesture — the download wants one.
+ */
+export async function prepareLocalEngine(onProgress) {
+  if (!SpeechRecognition || typeof SpeechRecognition.available !== 'function') {
+    engine.mode = 'unknown'
+    engine.detail = 'browser does not say'
+    return engine.mode
+  }
+  try {
+    let status = await SpeechRecognition.available(LOCAL_OPTIONS)
+    if (status === 'downloadable' || status === 'downloading') {
+      onProgress?.('downloading')
+      await SpeechRecognition.install(LOCAL_OPTIONS)
+      status = await SpeechRecognition.available(LOCAL_OPTIONS)
+    }
+    if (status === 'available') {
+      engine.mode = 'local'
+      engine.detail = 'on this device'
+    } else {
+      engine.mode = 'network'
+      engine.detail = status
+    }
+  } catch (err) {
+    engine.mode = 'unknown'
+    engine.detail = String(err && err.name ? err.name : err)
+  }
+  return engine.mode
+}
+
 const normalise = s =>
   s
     .toLowerCase()
@@ -255,8 +306,21 @@ export class VoiceListener {
     const rec = new SpeechRecognition()
     rec.continuous = true
     rec.interimResults = true
-    rec.lang = 'en-US'
+    rec.lang = LANG
     rec.maxAlternatives = 4
+
+    // Only asked for once the browser has confirmed it can do it. Asking
+    // speculatively is not free — an engine that cannot honour it fails the
+    // whole session rather than quietly falling back, which would leave the
+    // game deaf instead of merely slow.
+    if (engine.mode === 'local') {
+      try {
+        rec.processLocally = true
+        rec.options = LOCAL_OPTIONS
+      } catch {
+        engine.mode = 'network'
+      }
+    }
 
     rec.onstart = () => this.setState('listening')
 
@@ -274,6 +338,15 @@ export class VoiceListener {
     }
 
     rec.onerror = event => {
+      // The device said it could listen locally and then couldn't. Better a
+      // slow game than a deaf one: give the on-device path up for this session
+      // and let onend bring us back on the network engine.
+      if (engine.mode === 'local' && event.error === 'language-not-supported') {
+        engine.mode = 'network'
+        engine.detail = 'device backed out'
+        this.onStateChange?.(this.state)
+        return
+      }
       if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
         this.wantsToRun = false
         this.setState('denied')
