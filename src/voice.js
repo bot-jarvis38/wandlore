@@ -44,6 +44,67 @@ function editDistance(a, b) {
 const similarity = (a, b) => 1 - editDistance(a, b) / Math.max(a.length, b.length)
 
 /**
+ * A rough sound key — the same idea as Soundex, tuned for the one job here.
+ *
+ * Edit distance grades on spelling, and the recogniser is not spelling: handed
+ * an invented Latin word it returns the nearest English *sounds* it can
+ * assemble. "Expelliarmus" comes back as "a spell he armas", which is four
+ * characters of difference away from correct by letter and essentially
+ * identical by ear. Collapsing both sides onto their consonant skeleton — the
+ * part a recogniser rarely gets wrong — scores the thing the player actually
+ * did, which is say the word.
+ *
+ * Vowels are flattened to a single placeholder rather than deleted. Which
+ * vowel it was is where nearly all the mishearing happens, so that has to go —
+ * but *that there was one* is real structure, and dropping it collapses every
+ * word onto a short consonant stub where unrelated things start colliding.
+ * Deleting them outright made "hold on a second" cast INCENDIO
+ * (`tools/score-bench.mjs`); flattening them does not.
+ */
+export function phoneticKey(s) {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z]/g, '')
+    // digraphs first — they are single sounds and must not be split
+    .replace(/ph/g, 'f')
+    .replace(/(?:ch|ck|qu|q|kh)/g, 'k')
+    .replace(/sh/g, 's')
+    .replace(/th/g, 't')
+    .replace(/gh/g, 'g')
+    .replace(/wr/g, 'r')
+    .replace(/x/g, 'ks')
+    // consonants a recogniser swaps freely
+    .replace(/c/g, 'k')
+    .replace(/z/g, 's')
+    .replace(/w/g, 'v')
+    .replace(/[jy]/g, 'i')
+    // a doubled letter is one sound — before the vowels flatten, so that a
+    // genuine two-vowel run survives as two slots
+    .replace(/(.)\1+/g, '$1')
+    .replace(/[aeiou]/g, 'a')
+}
+
+/**
+ * The sound key is a lossy space, so a match in it is weaker evidence than a
+ * match in the letters. Shaded down by this much before the two compete, which
+ * keeps the generous ear from becoming a generous bar. Tuned on
+ * `tools/score-bench.mjs`: at 0.05 the sound key alone dragged cross-spell
+ * fires from 1 in 420 to 4, and at 0.08 it puts them back to 1 while keeping
+ * nearly all of the gain on mis-heard speech.
+ */
+const PHONETIC_DISCOUNT = 0.08
+
+const soundSimilarity = (a, b) => {
+  const ka = phoneticKey(a)
+  const kb = phoneticKey(b)
+  if (!ka || !kb) return 0
+  return Math.max(0, similarity(ka, kb) - PHONETIC_DISCOUNT)
+}
+
+/** Best of the two readings: what they spelled, and what it sounded like. */
+const bothWays = (a, b) => Math.max(similarity(a, b), soundSimilarity(a, b))
+
+/**
  * How well does anything the player just said match this spell? Slides a
  * window over the transcript so a match still lands inside "uh, stupefy!".
  */
@@ -62,7 +123,7 @@ export function scoreUtterance(transcript, spell) {
 
   for (const target of targets) {
     const targetFlat = target.replace(/ /g, '')
-    best = Math.max(best, similarity(said, target), similarity(saidFlat, targetFlat))
+    best = Math.max(best, bothWays(said, target), bothWays(saidFlat, targetFlat))
 
     // Windows around the target's own word count, not just at it: a spell said
     // as one word, or with a filler word swallowed into it, still lines up.
@@ -72,9 +133,53 @@ export function scoreUtterance(transcript, spell) {
         const chunk = words.slice(i, i + width).join(' ')
         best = Math.max(
           best,
-          similarity(chunk, target),
-          similarity(chunk.replace(/ /g, ''), targetFlat),
+          bothWays(chunk, target),
+          bothWays(chunk.replace(/ /g, ''), targetFlat),
         )
+      }
+    }
+  }
+  return best
+}
+
+/** How much of the word must be in before an unfinished one can fire. */
+export const PREFIX_COVER = 0.6
+/** And how cleanly that much of it has to match. */
+export const PREFIX_FIDELITY = 0.84
+
+/**
+ * Fire before the player has finished saying it.
+ *
+ * The whole-word score can only be reached once the whole word is in, and on
+ * TARANTALLEGRA that is most of a second of the player still talking with a
+ * boulder already in the air. But by the time two thirds of a five-syllable
+ * invented word has arrived, nothing else in the game begins like that — the
+ * outcome is decided and the only thing left to do is wait, which is exactly
+ * what felt unfair.
+ *
+ * Returns how much of the word is confidently in (0 when it isn't).
+ */
+export function prefixMatch(transcript, spell) {
+  const said = normalise(transcript).replace(/ /g, '')
+  if (said.length < 5) return 0
+
+  let best = 0
+  for (const raw of [spell.word, ...spell.spoken]) {
+    const target = normalise(raw).replace(/ /g, '')
+    // A prefix that is already the whole word is not a prefix — that case
+    // belongs to scoreUtterance, at the full bar.
+    const limit = Math.min(said.length, target.length - 1)
+    // The incantation may start partway in ("okay tarantalle…"), so try every
+    // starting point and keep the most complete confident read.
+    for (let i = 0; i + 5 <= limit; i++) {
+      for (let end = limit; end > i + 4; end--) {
+        const cover = (end - i) / target.length
+        if (cover < PREFIX_COVER) break
+        if (cover <= best) break
+        if (bothWays(said.slice(i, end), target.slice(0, end - i)) >= PREFIX_FIDELITY) {
+          best = cover
+          break
+        }
       }
     }
   }
@@ -85,7 +190,7 @@ export function scoreUtterance(transcript, spell) {
 export const MATCH_THRESHOLD = 0.66
 
 /**
- * Three characters of slop, or 36% of the word, whichever is kinder.
+ * Three characters of slop, or 44% of the word, whichever is kinder.
  *
  * A flat ratio is the wrong shape for short words. Recognition error is
  * roughly per-character, so the *rate* is stable across lengths but the
@@ -96,17 +201,33 @@ export const MATCH_THRESHOLD = 0.66
  * rejection was a short word (`tools/score-bench.mjs`). The absolute-error
  * floor is what fixes that; 21 spells with only one on screen at a time is why
  * it costs nothing.
+ *
+ * The rate went 36% → 44% after the player reported correct words still being
+ * refused: at a 30% character error rate that is 83% → 94% of correct attempts
+ * accepted, and at 40% it is 57% → 74%. What it buys the other way is small and
+ * one-directional — 1 phrase in 252 of ordinary English speech now fires
+ * something, and 4 pairs of spells in 420 accept each other. Both of those
+ * *grant* a cast the player did not earn; neither can refuse one they did. A
+ * game that occasionally gives you a free hit is not the thing that reads as
+ * broken. A game that ignores you is.
  */
 export function thresholdFor(spell) {
   const n = spell.word.replace(/\s/g, '').length
-  const allowed = Math.max(3, n * 0.36)
+  const allowed = Math.max(3, n * 0.44)
   return Math.max(0.5, 1 - allowed / n)
 }
 
 export class VoiceListener {
-  constructor({ onResult, onStateChange }) {
+  constructor({ onResult, onStateChange, onSpeechStart }) {
     this.onResult = onResult
     this.onStateChange = onStateChange
+    /**
+     * The engine knows you started making noise long before it knows what you
+     * said. That instant is the only honest timestamp for "the player cast" —
+     * everything after it is the recogniser thinking, and the game must not
+     * charge the player for that. See the hit rollback in main.js.
+     */
+    this.onSpeechStart = onSpeechStart
     this.recognition = null
     this.wantsToRun = false
     this.state = 'idle'
@@ -138,6 +259,8 @@ export class VoiceListener {
     rec.maxAlternatives = 4
 
     rec.onstart = () => this.setState('listening')
+
+    rec.onspeechstart = () => this.onSpeechStart?.()
 
     rec.onresult = event => {
       this.lastHeardAt = performance.now()

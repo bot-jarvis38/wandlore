@@ -8,7 +8,24 @@ import './style.css'
 import { buildWorld, CORRIDOR } from './world.js'
 import { SPELLS, spellsForFloor, Wand, Particles, Projectiles } from './spells.js'
 import { Dementor, Armour, Pixie } from './enemies.js'
-import { VoiceListener, scoreUtterance, speechSupported, thresholdFor } from './voice.js'
+import {
+  PREFIX_COVER,
+  VoiceListener,
+  prefixMatch,
+  scoreUtterance,
+  speechSupported,
+  thresholdFor,
+} from './voice.js'
+
+/**
+ * How long after the mic hears you start does the game keep treating you as
+ * mid-word. Covers the engine's own thinking time — Safari can sit on a
+ * finished utterance for the better part of a second — without being so long
+ * that a hit taken well before you spoke gets wrongly refunded.
+ */
+const SPEECH_FLIGHT_MS = 2200
+/** And how long the ending is held open for a transcript still in the air. */
+const DEATH_GRACE_MS = 900
 
 const params = new URLSearchParams(location.search)
 const DEBUG_STATE = params.get('state') // title | play | interlude | gameover
@@ -209,6 +226,7 @@ class Game {
     this.voice = new VoiceListener({
       onResult: (transcript, isFinal) => this.onHeard(transcript, isFinal),
       onStateChange: state => this.onVoiceState(state),
+      onSpeechStart: () => this.onSpeechStart(),
     })
 
     this.resetRun()
@@ -293,6 +311,9 @@ class Game {
     this.spawnQueue = []
     this.spawnTimer = 0
     this.currentWave = floorSpec(0)
+    clearTimeout(this._deathTimer)
+    this.pendingHit = null
+    this.speechStartedAt = 0
     this.updateHud()
   }
 
@@ -388,12 +409,58 @@ class Game {
 
   /* ── casting ─────────────────────────────────────────────────────── */
 
+  /**
+   * The mic heard a human start. Nothing is known about the words yet, and
+   * that is the point: this is the timestamp the cast is judged from, so the
+   * seconds the recogniser spends thinking are charged to the game and not to
+   * the player. See `rollBackLateHit`.
+   */
+  onSpeechStart() {
+    if (this.state !== 'playing') return
+    if (performance.now() - (this.lastCastAt ?? -1e9) < 600) return
+    this.speechStartedAt = performance.now()
+  }
+
+  /** Is a word still somewhere between the player's mouth and the transcript? */
+  speechInFlight(now = performance.now()) {
+    return this.speechStartedAt > 0 && now - this.speechStartedAt < SPEECH_FLIGHT_MS
+  }
+
+  /**
+   * A hit that landed while the player was already saying the word is the lag
+   * hitting them, not the enemy. When the transcript finally lands and it was
+   * right, the hit is taken back.
+   *
+   * Only the most recent one, only if it landed after they started speaking,
+   * and only once — so this can never become a way to farm health.
+   */
+  rollBackLateHit() {
+    const hit = this.pendingHit
+    this.pendingHit = null
+    if (!hit || !this.speechStartedAt || hit.at < this.speechStartedAt) return false
+    // A word that took longer than the flight window to come back is a stalled
+    // engine, not lag on this cast — past that point the hit is honestly theirs.
+    if (performance.now() - hit.at > SPEECH_FLIGHT_MS) return false
+
+    this.health = Math.min(100, this.health + hit.damage)
+    clearTimeout(this._deathTimer)
+    this.updateHud()
+    this.flashReaction('Said in time — that one does not count.')
+    return true
+  }
+
   onHeard(transcript, isFinal) {
     if (this.state !== 'playing' || !this.spell) return
     // The tail of the utterance that just fired a spell keeps arriving for a
     // beat afterwards. Scored against the NEW word it reads as a bad attempt
     // and paints a red 20% under a word you have not tried yet.
     if (performance.now() - (this.lastCastAt ?? -1e9) < 600) return
+
+    // Not every engine fires speechstart. Without it the arrival of the first
+    // words is the earliest moment we can prove they were talking — a worse
+    // anchor than the real onset, but far better than the transcript's own
+    // timestamp, which is the thing being compensated for.
+    if (!this.speechInFlight()) this.speechStartedAt = performance.now()
 
     const said = transcript.trim()
     const score = scoreUtterance(transcript, this.spell)
@@ -408,12 +475,17 @@ class Game {
     // Interim results arrive out of order across alternatives, so the display
     // tracks the best seen for this word rather than the latest — otherwise
     // the bar lurches backwards while you are still speaking.
-    this.bestHeard = Math.max(this.bestHeard ?? 0, shown)
+    // Enough of the word is in that it can only be this spell. Don't make them
+    // finish it and then wait for the engine — the outcome is already decided,
+    // and the waiting is what read as the game being slow.
+    const cover = score >= bar ? 0 : prefixMatch(transcript, this.spell)
+
+    this.bestHeard = Math.max(this.bestHeard ?? 0, cover || 0, shown)
     this.renderWord(this.bestHeard)
     this.showMatch(this.bestHeard)
     if (said) ui.heard.textContent = `“${said}”`
 
-    if (score >= bar) {
+    if (score >= bar || cover >= PREFIX_COVER) {
       ui.heard.className = 'heard hit'
       this.castCurrent('voice')
     } else if (isFinal && said.length > 2) {
@@ -439,6 +511,8 @@ class Game {
     if (this.casting) return
     this.casting = true
     this.lastCastAt = performance.now()
+    if (source === 'voice') this.rollBackLateHit()
+    this.speechStartedAt = 0
 
     const spell = this.spell
     this.attempts++
@@ -522,7 +596,9 @@ class Game {
   }
 
   onPlayerHit(enemy) {
+    const now = performance.now()
     this.health = Math.max(0, this.health - enemy.damage)
+    this.pendingHit = { damage: enemy.damage, at: now }
     this.streak = 0
     this.trauma = 1
     this.sfx.hurt()
@@ -531,7 +607,19 @@ class Game {
       easing: 'ease-out',
     })
     this.updateHud()
-    if (this.health <= 0) this.endRun()
+
+    if (this.health > 0) return
+    // Dying with the winning word already spoken and still stuck inside the
+    // recogniser is the single most unfair thing this game can do. Hold the
+    // ending open long enough for the transcript to arrive and undo it.
+    if (this.speechInFlight(now)) {
+      clearTimeout(this._deathTimer)
+      this._deathTimer = setTimeout(() => {
+        if (this.state === 'playing' && this.health <= 0) this.endRun()
+      }, DEATH_GRACE_MS)
+      return
+    }
+    this.endRun()
   }
 
   /* ── screens ─────────────────────────────────────────────────────── */
@@ -596,6 +684,7 @@ class Game {
   }
 
   endRun() {
+    clearTimeout(this._deathTimer)
     $('final-score').textContent = this.score.toLocaleString()
     $('final-wave').textContent = this.waveIndex + 1
     $('final-best').textContent = this.bestStreak

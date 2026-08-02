@@ -181,3 +181,58 @@ for (const rate of [0.2, 0.3, 0.4]) {
   console.log(`  ${(rate * 100).toFixed(0)}% of characters wrong :  ` +
     `per-word bar ${p(adaptive)}   flat ${MATCH_THRESHOLD} bar ${p(flat)}`)
 }
+
+/* ── firing before the word is finished ─────────────────────────────── */
+
+/**
+ * The latency fix has to be measured on both sides too: how much of the word
+ * the player is spared, and whether a partial utterance ever fires the wrong
+ * thing. A prefix that fires early on a spell the player is not being shown is
+ * worse than the delay it saves.
+ */
+const { prefixMatch, PREFIX_COVER } = voice
+
+let earlyFired = 0
+let earlySavedChars = 0
+for (const spell of SPELLS) {
+  const flat = spell.word.toLowerCase().replace(/\s/g, '')
+  // Walk the word one character at a time, the way interim results arrive.
+  for (let n = 5; n < flat.length; n++) {
+    if (prefixMatch(flat.slice(0, n), spell) >= PREFIX_COVER) {
+      earlyFired++
+      earlySavedChars += flat.length - n
+      break
+    }
+  }
+}
+console.log(
+  `\nearly fire: ${earlyFired}/${SPELLS.length} spells fire before the last letter, ` +
+    `${(earlySavedChars / Math.max(1, earlyFired)).toFixed(1)} characters saved on average`
+)
+
+let earlyWrong = 0
+let earlyChecked = 0
+for (const spell of SPELLS) {
+  for (const other of SPELLS) {
+    if (other === spell) continue
+    const flat = other.word.toLowerCase().replace(/\s/g, '')
+    for (let n = 5; n <= flat.length; n++) {
+      earlyChecked++
+      if (prefixMatch(flat.slice(0, n), spell) >= PREFIX_COVER) {
+        earlyWrong++
+        console.log(`  EARLY CROSS FIRE  ${spell.word} <- "${flat.slice(0, n)}"`)
+        break
+      }
+    }
+  }
+}
+for (const spell of SPELLS) {
+  for (const said of NOISE) {
+    earlyChecked++
+    if (prefixMatch(said, spell) >= PREFIX_COVER) {
+      earlyWrong++
+      console.log(`  EARLY FALSE FIRE  ${spell.word} <- "${said}"`)
+    }
+  }
+}
+console.log(`early fires on the wrong input ${earlyWrong}/${earlyChecked}`)
