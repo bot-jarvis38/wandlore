@@ -8,7 +8,7 @@ import './style.css'
 import { buildWorld, CORRIDOR } from './world.js'
 import { SPELLS, spellsForFloor, Wand, Particles, Projectiles } from './spells.js'
 import { Dementor, Armour, Pixie } from './enemies.js'
-import { VoiceListener, scoreUtterance, speechSupported, MATCH_THRESHOLD } from './voice.js'
+import { VoiceListener, scoreUtterance, speechSupported, thresholdFor } from './voice.js'
 
 const params = new URLSearchParams(location.search)
 const DEBUG_STATE = params.get('state') // title | play | interlude | gameover
@@ -258,6 +258,17 @@ class Game {
     window.addEventListener('pointercancel', up)
 
     ui.castButton.addEventListener('click', () => this.castCurrent('tap'))
+    // Tapping the mic readout wakes a stalled engine by hand. On iOS a fresh
+    // user gesture is sometimes the only thing that will restart it at all.
+    ui.micState.addEventListener('click', () => {
+      if (this.silentMode) return
+      this.voice.stop()
+      this.voice.start()
+      this.voice.lastHeardAt = performance.now()
+      this._micDeaf = false
+      ui.micState.classList.remove('deaf')
+      ui.micText.textContent = 'LISTENING'
+    })
     window.addEventListener('keydown', e => {
       if (e.code === 'Space') {
         e.preventDefault()
@@ -360,7 +371,7 @@ class Game {
   /** The live match bar and percentage — the same number that fires the spell. */
   showMatch(score) {
     const pct = Math.round(score * 100)
-    const band = score >= MATCH_THRESHOLD ? 'hit' : score >= 0.42 ? 'near' : ''
+    const band = score >= 1 ? 'hit' : score >= 0.66 ? 'near' : ''
     ui.matchFill.style.width = `${pct}%`
     ui.matchFill.className = `match-fill ${band}`
     ui.matchPct.textContent = `${pct}%`
@@ -379,28 +390,40 @@ class Game {
 
   onHeard(transcript, isFinal) {
     if (this.state !== 'playing' || !this.spell) return
+    // The tail of the utterance that just fired a spell keeps arriving for a
+    // beat afterwards. Scored against the NEW word it reads as a bad attempt
+    // and paints a red 20% under a word you have not tried yet.
+    if (performance.now() - (this.lastCastAt ?? -1e9) < 600) return
+
     const said = transcript.trim()
     const score = scoreUtterance(transcript, this.spell)
+    const bar = thresholdFor(this.spell)
+
+    // Shown as a share of THIS word's bar, not as a raw similarity — so a full
+    // meter always means "that fires" and a lit word always means "that was
+    // enough", on every spell. A raw number would sit at 61% on a word whose
+    // bar is 54% and read as a failure the game then rewarded.
+    const shown = Math.min(1, score / bar)
 
     // Interim results arrive out of order across alternatives, so the display
-    // tracks the best score seen for this word rather than the latest one —
-    // otherwise the bar lurches backwards while you are still speaking.
-    this.bestHeard = Math.max(this.bestHeard ?? 0, score)
+    // tracks the best seen for this word rather than the latest — otherwise
+    // the bar lurches backwards while you are still speaking.
+    this.bestHeard = Math.max(this.bestHeard ?? 0, shown)
     this.renderWord(this.bestHeard)
     this.showMatch(this.bestHeard)
     if (said) ui.heard.textContent = `“${said}”`
 
-    if (score >= MATCH_THRESHOLD) {
+    if (score >= bar) {
       ui.heard.className = 'heard hit'
       this.castCurrent('voice')
     } else if (isFinal && said.length > 2) {
       this.attempts++
       ui.heard.className = 'heard miss'
-      ui.heard.textContent = `heard “${said}” — ${Math.round(score * 100)}%`
+      ui.heard.textContent = `heard “${said}” — ${Math.round(shown * 100)}%`
       ui.incantation.classList.add('fail')
       setTimeout(() => ui.incantation.classList.remove('fail'), 340)
       this.sfx.fizzle()
-      if (score >= 0.42) this.flashReaction('Close. The castle is unmoved.')
+      if (shown >= 0.7) this.flashReaction('So close. Again.')
     }
   }
 
@@ -415,6 +438,7 @@ class Game {
     // lock, a second interim result inside that beat fires the same spell twice.
     if (this.casting) return
     this.casting = true
+    this.lastCastAt = performance.now()
 
     const spell = this.spell
     this.attempts++
@@ -548,6 +572,9 @@ class Game {
     ui.micText.textContent = this.silentMode ? 'SILENT' : 'LISTENING'
 
     this.resetRun()
+    this.runStartedAt = performance.now()
+    this._micDeaf = false
+    ui.micState.classList.remove('deaf')
     this.startWave(0)
     this.show('playing')
   }
@@ -586,6 +613,27 @@ class Game {
     ui.micText.textContent =
       state === 'listening' ? 'LISTENING' : state === 'denied' ? 'MUTED' : 'RE-LISTENING'
     ui.micState.classList.toggle('muted', state === 'denied')
+  }
+
+  /**
+   * A speech engine that has quietly stopped delivering results is
+   * indistinguishable, from the player's chair, from a game that is marking
+   * correct answers wrong. So say it out loud, and offer the fix.
+   */
+  checkMicHealth() {
+    if (this.silentMode || this.voice.state === 'denied') return
+    const since = performance.now() - (this.voice.lastHeardAt || this.runStartedAt || 0)
+    const deaf = since > 9000
+    if (deaf === this._micDeaf) return
+    this._micDeaf = deaf
+    ui.micState.classList.toggle('deaf', deaf)
+    ui.micText.textContent = deaf ? 'MIC ASLEEP — TAP' : 'LISTENING'
+    if (deaf) {
+      // Kick it ourselves as well as offering the tap; on iOS Safari the
+      // engine ends after every utterance and occasionally never comes back.
+      this.voice.stop()
+      this.voice.start()
+    }
   }
 
   /* ── frame ───────────────────────────────────────────────────────── */
@@ -632,13 +680,25 @@ class Game {
       this.castLeft -= dt
       ui.castFill.style.transform = `scaleX(${Math.max(0, this.castLeft / this.castWindow)})`
       if (this.castLeft <= 0) {
+        // The word STAYS. Swapping it here was the cruellest bug in the build:
+        // you say a five-syllable incantation correctly, the window closes
+        // while you are still on the last syllable, the word changes, and the
+        // transcript that finally lands gets scored against something you were
+        // never asked for. From the outside that reads as the engine marking a
+        // correct answer wrong. Now the clock only costs you the streak.
         this.streak = 0
+        this.castLeft = this.castWindow
         this.sfx.fizzle()
         ui.incantation.classList.add('fail')
         setTimeout(() => ui.incantation.classList.remove('fail'), 340)
-        this.flashReaction('The word died in your throat.')
-        this.nextSpell()
+        this.flashReaction('Too slow — but the word still stands.')
       }
+    }
+
+    this._micCheck = (this._micCheck ?? 0) + dt
+    if (this._micCheck > 1) {
+      this._micCheck = 0
+      this.checkMicHealth()
     }
 
     this.projectiles.update(dt, this.enemies, (spell, enemy, at) =>

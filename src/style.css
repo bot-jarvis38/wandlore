@@ -350,6 +350,24 @@ body {
   animation: none;
 }
 
+/*
+ * A stalled speech engine looks exactly like a game marking correct answers
+ * wrong, so it gets its own loud state — and it is the one HUD element that
+ * takes taps, because on iOS a fresh gesture is sometimes the only thing that
+ * restarts recognition.
+ */
+.mic-state.deaf {
+  pointer-events: auto;
+  color: #ff8a78;
+  cursor: pointer;
+}
+
+.mic-state.deaf .mic-dot {
+  background: #ff5a3c;
+  box-shadow: 0 0 14px rgba(255, 90, 60, 0.9);
+  animation: pulse 0.7s ease-in-out infinite;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 0.35; transform: scale(0.85); }
   50% { opacity: 1; transform: scale(1.15); }

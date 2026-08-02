@@ -53,20 +53,55 @@ export function scoreUtterance(transcript, spell) {
 
   const targets = [spell.word, ...spell.spoken].map(normalise)
   const words = said.split(' ')
+  // Compared with the spaces gone as well as with them in. Recognisers break
+  // an invented word wherever they like — "wing gardium levi osa" is four
+  // words for a target that is two — and a word-aligned window can never see
+  // past that, while the flattened forms line up exactly.
+  const saidFlat = said.replace(/ /g, '')
   let best = 0
 
   for (const target of targets) {
+    const targetFlat = target.replace(/ /g, '')
+    best = Math.max(best, similarity(said, target), similarity(saidFlat, targetFlat))
+
+    // Windows around the target's own word count, not just at it: a spell said
+    // as one word, or with a filler word swallowed into it, still lines up.
     const span = target.split(' ').length
-    for (let i = 0; i + span <= words.length; i++) {
-      best = Math.max(best, similarity(words.slice(i, i + span).join(' '), target))
+    for (let width = Math.max(1, span - 1); width <= span + 2; width++) {
+      for (let i = 0; i + width <= words.length; i++) {
+        const chunk = words.slice(i, i + width).join(' ')
+        best = Math.max(
+          best,
+          similarity(chunk, target),
+          similarity(chunk.replace(/ /g, ''), targetFlat),
+        )
+      }
     }
-    // and against the whole utterance, for one-word spells said alone
-    best = Math.max(best, similarity(said, target))
   }
   return best
 }
 
+/** The bar an ordinary spell has to clear. */
 export const MATCH_THRESHOLD = 0.66
+
+/**
+ * Three characters of slop, or 36% of the word, whichever is kinder.
+ *
+ * A flat ratio is the wrong shape for short words. Recognition error is
+ * roughly per-character, so the *rate* is stable across lengths but the
+ * variance is not: one bad character in STUPEFY is 14% of the word, and two
+ * unlucky ones drop a perfectly good attempt under a flat 0.66 while the same
+ * error rate on TARANTALLEGRA sails through. Simulated at a 20% character
+ * error rate, the flat bar rejected 1 in 20 correct attempts and every single
+ * rejection was a short word (`tools/score-bench.mjs`). The absolute-error
+ * floor is what fixes that; 21 spells with only one on screen at a time is why
+ * it costs nothing.
+ */
+export function thresholdFor(spell) {
+  const n = spell.word.replace(/\s/g, '').length
+  const allowed = Math.max(3, n * 0.36)
+  return Math.max(0.5, 1 - allowed / n)
+}
 
 export class VoiceListener {
   constructor({ onResult, onStateChange }) {
@@ -75,6 +110,9 @@ export class VoiceListener {
     this.recognition = null
     this.wantsToRun = false
     this.state = 'idle'
+    /** Diagnostics: how often the engine dropped us, and when it last heard anything. */
+    this.restarts = 0
+    this.lastHeardAt = 0
   }
 
   /** Ask for the mic up front, so the in-game prompt isn't a surprise. */
@@ -102,6 +140,7 @@ export class VoiceListener {
     rec.onstart = () => this.setState('listening')
 
     rec.onresult = event => {
+      this.lastHeardAt = performance.now()
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
         // every alternative is a chance for the incantation to be in there
@@ -122,16 +161,23 @@ export class VoiceListener {
       }
     }
 
-    // Chrome ends the session after a pause. Restart, or the game goes deaf
-    // partway through a wave with no visible cause.
+    // Every engine ends the session on its own: Chrome after a pause, iOS
+    // Safari after every single utterance regardless of `continuous`. Whatever
+    // ends it, the game is deaf until it comes back — and the old 220ms delay
+    // sat on top of the engine's own start-up latency, so a spell spoken right
+    // after the last one was simply never heard. Restart immediately.
     rec.onend = () => {
       this.recognition = null
-      if (this.wantsToRun) {
-        this.setState('restarting')
-        setTimeout(() => this.wantsToRun && this.start(), 220)
-      } else {
+      if (!this.wantsToRun) {
         this.setState('idle')
+        return
       }
+      this.restarts++
+      this.setState('restarting')
+      this.start()
+      // A failed synchronous restart (engine still tearing down) leaves us
+      // with no recogniser at all, which is the silent-death case. Retry.
+      if (!this.recognition) setTimeout(() => this.wantsToRun && this.start(), 120)
     }
 
     this.recognition = rec

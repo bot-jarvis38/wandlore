@@ -93,9 +93,12 @@ export const SPELLS = [
     reaction: 'Everything nearby is briefly airborne.',
   },
   {
-    word: 'REDUCIO',
+    // Not REDUCIO, which is the canon shrinking charm — one letter from
+    // REDUCTO, already in this list. Two words that differ by a letter are a
+    // scoring coin-flip, and losing a coin-flip reads as a broken engine.
+    word: 'DIMINUENDO',
     tier: 1,
-    spoken: ['reducio', 'reduce io', 'reduce e o', 'redusio', 'radicchio'],
+    spoken: ['diminuendo', 'diminuento', 'dimin uendo', 'diminuendo', 'the minuendo'],
     color: 0x7fd8ff,
     glow: 0xd9f4ff,
     damage: 10,
