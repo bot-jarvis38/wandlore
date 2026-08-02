@@ -2,336 +2,16 @@ import * as THREE from 'three'
 import { radialSprite } from './textures.js'
 
 /**
- * Spells, the wand that fires them, and the particle work that sells the hit.
+ * The wand that fires the spells, and the particle work that sells the hit.
  * Every spell is a colour, a shape of light, and a rule — the incantation is
  * the trigger, so the payoff for saying it has to be loud.
- */
-
-/**
- * `tier` is how hard the word is to say, not how strong the spell is — 1 is a
- * word you can bark, 3 is a mouthful you will fumble the first three times.
- * The game ramps tiers with the floor, so the difficulty curve is your tongue.
  *
- * `effect` is the funny one. A spell that only subtracts a number is a number;
- * these do something visible and stupid to the thing in front of you, and
- * `reaction` is the line that flashes when it lands.
+ * The spells themselves moved to `spellbook.js` when the bank went from
+ * twenty-one words to a hundred: a thousand lines of data in front of the
+ * three.js classes that draw it made both harder to find. Re-exported here so
+ * that everything importing `SPELLS` from this file still works.
  */
-export const SPELLS = [
-  /* ── tier 1: short, barkable ─────────────────────────────────────── */
-  {
-    word: 'STUPEFY',
-    tier: 1,
-    spoken: ['stupefy', 'stupify', 'stupefied', 'stupa fy', 'stew pify', 'to pacify'],
-    color: 0xff3b30,
-    glow: 0xff8a6a,
-    damage: 34,
-    speed: 46,
-    radius: 0,
-    note: 'a red bolt, straight to the chest',
-    reaction: 'It drops like a sack of bricks.',
-  },
-  {
-    word: 'INCENDIO',
-    tier: 1,
-    spoken: ['incendio', 'in cendio', 'insendio', 'in send io', 'incendia', 'in san diego'],
-    color: 0xff6a1a,
-    glow: 0xffb066,
-    damage: 22,
-    speed: 34,
-    radius: 3.4,
-    burn: true,
-    note: 'a gout of flame that keeps burning',
-    reaction: 'Something back there is on fire now.',
-  },
-  {
-    word: 'BOMBARDA',
-    tier: 1,
-    spoken: ['bombarda', 'bombardo', 'bomb arda', 'bombarder', 'bum barda', 'bomb barda'],
-    color: 0xbfe8ff,
-    glow: 0xffffff,
-    damage: 48,
-    speed: 30,
-    radius: 4.6,
-    note: 'blast radius, so aim into the crowd',
-    reaction: 'The corridor rearranges itself.',
-  },
-  {
-    word: 'REDUCTO',
-    tier: 1,
-    spoken: ['reducto', 'reductor', 'reduce toe', 'reduct o', 'ridotto', 'red duct o'],
-    color: 0xc07bff,
-    glow: 0xe4c4ff,
-    damage: 40,
-    speed: 62,
-    radius: 0,
-    pierce: true,
-    note: 'punches through everything in the lane',
-    reaction: 'Straight through. And through the next one.',
-  },
-  {
-    word: 'DIFFINDO',
-    tier: 1,
-    spoken: ['diffindo', 'difindo', 'diff indo', 'defiendo', 'the fiendo'],
-    color: 0x9ef0d0,
-    glow: 0xdffff2,
-    damage: 30,
-    speed: 58,
-    radius: 0,
-    note: 'a clean severing charm',
-    reaction: 'Cut neatly in half. Both halves look annoyed.',
-  },
-  {
-    word: 'CONFRINGO',
-    tier: 1,
-    spoken: ['confringo', 'con fringo', 'confringe o', 'kon fringo', 'con flamingo'],
-    color: 0xffa23d,
-    glow: 0xffe0b0,
-    damage: 38,
-    speed: 40,
-    radius: 3.8,
-    note: 'the blasting curse',
-    reaction: 'Everything nearby is briefly airborne.',
-  },
-  {
-    // Not REDUCIO, which is the canon shrinking charm — one letter from
-    // REDUCTO, already in this list. Two words that differ by a letter are a
-    // scoring coin-flip, and losing a coin-flip reads as a broken engine.
-    word: 'DIMINUENDO',
-    tier: 1,
-    spoken: ['diminuendo', 'diminuento', 'dimin uendo', 'diminuendo', 'the minuendo'],
-    color: 0x7fd8ff,
-    glow: 0xd9f4ff,
-    damage: 10,
-    speed: 52,
-    radius: 0,
-    effect: 'shrink',
-    note: 'shrinks it to something you can step on',
-    reaction: 'It is now the size of a teapot and furious about it.',
-  },
-
-  /* ── tier 2: the ones you have to slow down for ──────────────────── */
-  {
-    word: 'EXPELLIARMUS',
-    tier: 2,
-    spoken: [
-      'expelliarmus', 'expeliarmus', 'expelly armus', 'expel he armus',
-      'a spell he armas', 'expel yarmouth', 'expel the armors',
-    ],
-    color: 0xffc23d,
-    glow: 0xffe6a0,
-    damage: 26,
-    speed: 54,
-    radius: 2.4,
-    knockback: 7,
-    note: 'disarms, and throws them back',
-    reaction: 'Disarmed, and sent back down the corridor.',
-  },
-  {
-    word: 'IMPEDIMENTA',
-    tier: 2,
-    spoken: ['impedimenta', 'impediment a', 'impediment', 'impede a menta', 'in pedimenta'],
-    color: 0x8fd0ff,
-    glow: 0xdbefff,
-    damage: 16,
-    speed: 50,
-    radius: 3.0,
-    effect: 'freeze',
-    note: 'stops it dead where it stands',
-    reaction: 'Frozen mid-stride, one foot still up.',
-  },
-  {
-    word: 'LEVICORPUS',
-    tier: 2,
-    spoken: ['levicorpus', 'levi corpus', 'levy corpus', 'levi corpse', 'heavy corpus'],
-    color: 0xc9f0ff,
-    glow: 0xffffff,
-    damage: 14,
-    speed: 48,
-    radius: 0,
-    effect: 'levitate',
-    note: 'hoists it into the air by the ankle',
-    reaction: 'Hanging upside down by one ankle, flailing.',
-  },
-  {
-    word: 'RICTUSEMPRA',
-    tier: 2,
-    spoken: ['rictusempra', 'rictus empra', 'rictus sempra', 'rick to sempra', 'ricky sempra'],
-    color: 0xffe27a,
-    glow: 0xfff6d0,
-    damage: 12,
-    speed: 56,
-    radius: 0,
-    effect: 'laugh',
-    note: 'the tickling charm',
-    reaction: 'It doubles over laughing. It cannot advance while laughing.',
-  },
-  {
-    word: 'ENGORGIO',
-    tier: 2,
-    spoken: ['engorgio', 'en gorgio', 'in gorgio', 'and gorgio', 'in georgia'],
-    color: 0xff8fd0,
-    glow: 0xffd6ee,
-    damage: 18,
-    speed: 44,
-    radius: 0,
-    effect: 'grow',
-    note: 'inflates it until it is a liability',
-    reaction: 'Now enormous, slow, and extremely easy to hit.',
-  },
-  {
-    word: 'FURNUNCULUS',
-    tier: 2,
-    spoken: ['furnunculus', 'fur nunculus', 'furuncle us', 'fernunculus', 'for uncle us'],
-    color: 0x9fe07a,
-    glow: 0xdcf7c4,
-    damage: 28,
-    speed: 46,
-    radius: 2.2,
-    note: 'covers it in boils',
-    reaction: 'Boils. Everywhere. It has stopped caring about you.',
-  },
-  {
-    word: 'EXPECTO PATRONUM',
-    tier: 2,
-    spoken: [
-      'expecto patronum', 'expecto patronium', 'expect o patronum',
-      'expecto patron', 'expect a patronum', 'espresso patronum',
-    ],
-    color: 0xdff4ff,
-    glow: 0xffffff,
-    damage: 30,
-    speed: 26,
-    radius: 7.5,
-    note: 'a stag of light — clears the corridor',
-    reaction: 'A stag of light goes through the lot of them.',
-  },
-
-  /* ── tier 3: tongue-twisters ─────────────────────────────────────── */
-  {
-    word: 'TARANTALLEGRA',
-    tier: 3,
-    spoken: [
-      'tarantallegra', 'tarantella gra', 'tarantula legra', 'tarantallegro',
-      'tarantella allegra', 'tarantula allegra',
-    ],
-    color: 0xff6ad5,
-    glow: 0xffd4f2,
-    damage: 14,
-    speed: 50,
-    radius: 2.6,
-    effect: 'dance',
-    note: 'makes its legs dance without permission',
-    reaction: 'Its legs have started dancing. The rest of it disapproves.',
-  },
-  {
-    word: 'PETRIFICUS TOTALUS',
-    tier: 3,
-    spoken: [
-      'petrificus totalus', 'petrificus totalis', 'petrify us totalus',
-      'pacificus totalus', 'petrificus total us', 'terrific is totalus',
-    ],
-    color: 0xa8b8d8,
-    glow: 0xe6eeff,
-    damage: 26,
-    speed: 44,
-    radius: 0,
-    effect: 'freeze',
-    note: 'full body-bind',
-    reaction: 'Rigid as a plank. Falls over like one too.',
-  },
-  {
-    word: 'LOCOMOTOR MORTIS',
-    tier: 3,
-    spoken: [
-      'locomotor mortis', 'loco motor mortis', 'locomotive mortis',
-      'locomotor morris', 'loco motor mortise',
-    ],
-    color: 0x7ad4ff,
-    glow: 0xd6f2ff,
-    damage: 20,
-    speed: 52,
-    radius: 0,
-    effect: 'trip',
-    note: 'locks the legs together',
-    reaction: 'Legs glued shut. It topples like a felled tree.',
-  },
-  {
-    word: 'WINGARDIUM LEVIOSA',
-    tier: 3,
-    spoken: [
-      'wingardium leviosa', 'wingardium leviosar', 'win gardium leviosa',
-      'wing hard him leviosa', 'wingardium levio sa', 'wing garden leviosa',
-    ],
-    color: 0xdfe8ff,
-    glow: 0xffffff,
-    damage: 12,
-    speed: 40,
-    radius: 2.0,
-    effect: 'levitate',
-    note: "it's leviOsa, not levioSA",
-    reaction: 'Up it goes, slowly, looking betrayed.',
-  },
-  {
-    word: 'SLUGULUS ERUCTO',
-    tier: 3,
-    spoken: [
-      'slugulus eructo', 'sluggulus eructo', 'slug u lus eructo',
-      'slugulus erupto', 'slug list eructo', 'sluggish eructo',
-    ],
-    color: 0x8fd67a,
-    glow: 0xd8f5c8,
-    damage: 24,
-    speed: 38,
-    radius: 0,
-    effect: 'laugh',
-    note: 'the slug-vomiting charm, regrettably',
-    reaction: 'It is now producing slugs. Steadily. It has given up on you.',
-  },
-  {
-    word: 'ANTEOCULATIA',
-    tier: 3,
-    spoken: [
-      'anteoculatia', 'ante oculatia', 'anti oculatia', 'anteo culatia',
-      'auntie oculatia', 'ante ocular tia',
-    ],
-    color: 0xc8a2ff,
-    glow: 0xeadcff,
-    damage: 22,
-    speed: 46,
-    radius: 0,
-    effect: 'grow',
-    note: 'grows antlers on it',
-    reaction: 'It has antlers now. It keeps catching them on the walls.',
-  },
-  {
-    word: 'OPPUGNO MAXIMA',
-    tier: 3,
-    spoken: [
-      'oppugno maxima', 'oppugno maximus', 'opugno maxima', 'oh pugno maxima',
-      'a pug no maxima', 'oppugno maximum',
-    ],
-    color: 0xffd27a,
-    glow: 0xfff0cc,
-    damage: 36,
-    speed: 44,
-    radius: 5.2,
-    knockback: 4,
-    note: 'sets the whole corridor on them',
-    reaction: 'Everything loose in the corridor picks a side, and it is yours.',
-  },
-]
-
-/** Spells whose word is short enough to bark under pressure. */
-export function spellsForFloor(floor) {
-  // Floor 1 is tier 1 only; tier 2 joins at floor 2, tier 3 at floor 4. After
-  // that everything is in the bag and the tongue-twisters get more likely.
-  const maxTier = floor >= 4 ? 3 : floor >= 2 ? 2 : 1
-  const pool = SPELLS.filter(s => s.tier <= maxTier)
-  if (maxTier < 3) return pool
-  // Weight the hard ones up as the floors climb, so late game is a mouthful.
-  const extra = Math.min(3, Math.floor((floor - 4) / 2))
-  return pool.concat(...Array.from({ length: extra }, () => SPELLS.filter(s => s.tier === 3)))
-}
+export { SPELLS, spellsForFloor } from './spellbook.js'
 
 /* ── the wand in your hand ─────────────────────────────────────────── */
 
@@ -584,22 +264,29 @@ export class Projectiles {
     this.particles = particles
     this.live = []
     this.trailTex = radialSprite()
+    /**
+     * Bolts are the highest-churn object in the game — one per cast, gone
+     * within three seconds — and each one used to be built from scratch and
+     * then abandoned: a sphere, three materials and a light per shot, removed
+     * from the scene on expiry and never freed. Pooled instead. A bolt is a
+     * bolt; only its colour and position differ, and those are cheap to set.
+     */
+    this.pool = []
+    this.coreGeo = new THREE.SphereGeometry(0.11, 12, 12)
   }
 
-  spawn(spell, from, direction) {
-    const group = new THREE.Group()
-    group.position.copy(from)
+  /** A bolt shell, from the pool if there is one going spare. */
+  acquire() {
+    const spare = this.pool.pop()
+    if (spare) return spare
 
-    const core = new THREE.Mesh(
-      new THREE.SphereGeometry(0.11, 12, 12),
-      new THREE.MeshBasicMaterial({ color: spell.glow })
-    )
+    const group = new THREE.Group()
+    const core = new THREE.Mesh(this.coreGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }))
     group.add(core)
 
     const halo = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.trailTex,
-        color: spell.color,
         transparent: true,
         depthWrite: false,
         blending: THREE.AdditiveBlending,
@@ -612,7 +299,6 @@ export class Projectiles {
     const streak = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.trailTex,
-        color: spell.color,
         transparent: true,
         opacity: 0.75,
         depthWrite: false,
@@ -622,19 +308,32 @@ export class Projectiles {
     streak.scale.set(0.38, 2.2, 1)
     group.add(streak)
 
-    const light = new THREE.PointLight(spell.color, 6, 8, 2)
+    const light = new THREE.PointLight(0xffffff, 6, 8, 2)
     group.add(light)
 
-    this.scene.add(group)
-    this.live.push({
-      spell,
-      group,
-      halo,
-      light,
-      dir: direction.clone().normalize(),
-      age: 0,
-      hits: new Set(),
-    })
+    return { group, core, halo, streak, light, hits: new Set(), dir: new THREE.Vector3() }
+  }
+
+  spawn(spell, from, direction) {
+    const b = this.acquire()
+    b.group.position.copy(from)
+    b.core.material.color.setHex(spell.glow)
+    b.halo.material.color.setHex(spell.color)
+    b.streak.material.color.setHex(spell.color)
+    b.light.color.setHex(spell.color)
+    b.dir.copy(direction).normalize()
+    b.hits.clear()
+    b.spell = spell
+    b.age = 0
+
+    this.scene.add(b.group)
+    this.live.push(b)
+  }
+
+  /** Off the screen and back on the shelf. */
+  retire(b) {
+    this.scene.remove(b.group)
+    this.pool.push(b)
   }
 
   update(dt, enemies, onHit) {
@@ -661,14 +360,14 @@ export class Projectiles {
       }
 
       if (consumed || b.age > 2.6 || b.group.position.z < -100) {
-        this.scene.remove(b.group)
+        this.retire(b)
         this.live.splice(i, 1)
       }
     }
   }
 
   clear() {
-    for (const b of this.live) this.scene.remove(b.group)
+    for (const b of this.live) this.retire(b)
     this.live.length = 0
   }
 }

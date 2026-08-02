@@ -15,6 +15,15 @@ function makeCanvas(size) {
   return canvas
 }
 
+/**
+ * Every canvas here is drawn once and then read back pixel by pixel — for the
+ * grain pass, and again to derive a normal map from its luminance. Without the
+ * hint the browser keeps each one on the GPU and warns, once per canvas, that
+ * the readback is the slow path. Asking for a CPU-side buffer up front is both
+ * faster for what this file actually does and quiet in the console.
+ */
+const ctx2d = canvas => canvas.getContext('2d', { willReadFrequently: true })
+
 /** Value noise, tileable on `size`, so nothing seams at a wall join. */
 function noiseField(size, cells, seed = 1) {
   const rand = mulberry32(seed)
@@ -69,10 +78,10 @@ function mulberry32(a) {
 /** Derive a normal map from a colour canvas by treating luminance as height. */
 function normalFromCanvas(canvas, strength = 2.2) {
   const size = canvas.width
-  const src = canvas.getContext('2d').getImageData(0, 0, size, size).data
+  const src = ctx2d(canvas).getImageData(0, 0, size, size).data
   const out = document.createElement('canvas')
   out.width = out.height = size
-  const dst = out.getContext('2d').createImageData(size, size)
+  const dst = ctx2d(out).createImageData(size, size)
 
   const lum = i => (src[i * 4] * 0.299 + src[i * 4 + 1] * 0.587 + src[i * 4 + 2] * 0.114) / 255
 
@@ -93,7 +102,7 @@ function normalFromCanvas(canvas, strength = 2.2) {
       dst.data[i + 3] = 255
     }
   }
-  out.getContext('2d').putImageData(dst, 0, 0)
+  ctx2d(out).putImageData(dst, 0, 0)
   return out
 }
 
@@ -109,7 +118,7 @@ function toTexture(canvas, repeatX = 1, repeatY = 1, srgb = false) {
 /* ── stone wall: coursed ashlar blocks, chipped, damp at the base ──── */
 function stoneWallCanvas(size = 512) {
   const canvas = makeCanvas(size)
-  const ctx = canvas.getContext('2d')
+  const ctx = ctx2d(canvas)
   const grain = fbm(size, 7)
 
   ctx.fillStyle = '#2a2521'
@@ -158,7 +167,7 @@ function stoneWallCanvas(size = 512) {
 /* ── floor: worn flagstones, polished into a walking line ──────────── */
 function flagstoneCanvas(size = 512) {
   const canvas = makeCanvas(size)
-  const ctx = canvas.getContext('2d')
+  const ctx = ctx2d(canvas)
   const grain = fbm(size, 21)
   const rand = mulberry32(404)
 
@@ -195,7 +204,7 @@ function flagstoneCanvas(size = 512) {
 /* ── oak: pillars, door frames, the spellbook lectern ──────────────── */
 function oakCanvas(size = 256) {
   const canvas = makeCanvas(size)
-  const ctx = canvas.getContext('2d')
+  const ctx = ctx2d(canvas)
   ctx.fillStyle = '#38251a'
   ctx.fillRect(0, 0, size, size)
   const rand = mulberry32(77)
@@ -279,10 +288,28 @@ export function buildMaterials() {
   return cache
 }
 
-/** Soft radial sprite — flames, embers, dust, impact bursts all use it. */
+/**
+ * Soft radial sprite — flames, embers, dust, impact bursts all use it.
+ *
+ * Memoised on the pair of colours, because the callers are not all one-time
+ * setup: every Dementor asked for its own copy of the eye glow at birth and
+ * every Pixie its own halo, which is a 128×128 canvas drawn, uploaded to the
+ * GPU and never released, once per creature, for the whole run. There are five
+ * distinct sprites in the game and there should only ever be five textures.
+ *
+ * Safe to share because nothing here is per-instance: the texture is the
+ * picture, and what varies between creatures — opacity, scale, tint — lives on
+ * the sprite's material, not on the map.
+ */
+const spriteCache = new Map()
+
 export function radialSprite(inner = 'rgba(255,255,255,1)', outer = 'rgba(255,255,255,0)') {
+  const key = `${inner}|${outer}`
+  const cached = spriteCache.get(key)
+  if (cached) return cached
+
   const canvas = makeCanvas(128)
-  const ctx = canvas.getContext('2d')
+  const ctx = ctx2d(canvas)
   const g = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
   g.addColorStop(0, inner)
   g.addColorStop(0.4, inner.replace(/[\d.]+\)$/, '0.55)'))
@@ -291,5 +318,6 @@ export function radialSprite(inner = 'rgba(255,255,255,1)', outer = 'rgba(255,25
   ctx.fillRect(0, 0, 128, 128)
   const tex = new THREE.CanvasTexture(canvas)
   tex.colorSpace = THREE.SRGBColorSpace
+  spriteCache.set(key, tex)
   return tex
 }

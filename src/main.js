@@ -49,6 +49,16 @@ const QUALITY_FLOOR = 1
  */
 const QUALITY_START = 2
 const QUALITY_CEILING = 3
+/**
+ * How many consecutive good frames buy one notch of resolution back, and the
+ * most that may ever be demanded. 240 is four seconds at 60fps — long enough
+ * that a single quiet moment between waves does not lift the resolution into
+ * the next stutter. The ceiling was 3600 (a full minute per notch) and that is
+ * how a three-second stall turned into a four-minute-blurry game; see the
+ * halving in `tuneQuality`.
+ */
+const QUALITY_PATIENCE_MIN = 240
+const QUALITY_PATIENCE_MAX = 1800
 
 /** Every resolution the renderer is ever set to passes through here. */
 const qualityClamp = n => Math.min(QUALITY_CEILING, Math.max(QUALITY_FLOOR, n))
@@ -239,7 +249,7 @@ class Game {
 
     this.enemies = []
     this.state = 'title'
-    this.clock = new THREE.Clock()
+    this.timer = new THREE.Timer()
     this.trauma = 0
     this.look = { yaw: 0, pitch: 0, targetYaw: 0, targetPitch: 0 }
     this.silentMode = false
@@ -301,7 +311,7 @@ class Game {
    * image blown up over the display. That is what "super blurry" was.
    */
   tuneQuality(dt) {
-    const q = this._q ?? (this._q = { slow: 0, fast: 0, patience: 240 })
+    const q = this._q ?? (this._q = { slow: 0, fast: 0, patience: QUALITY_PATIENCE_MIN })
     const ms = dt * 1000
 
     if (ms > 20.5) {
@@ -322,13 +332,31 @@ class Game {
       // cap on the number of lifts did that too, but it was a one-way ratchet:
       // a phone that dipped once during a busy wave stayed soft for the rest
       // of the session even when it had room to spare.
-      q.patience = Math.min(3600, q.patience * 2)
+      q.patience = Math.min(QUALITY_PATIENCE_MAX, q.patience * 2)
       return
     }
     const ceiling = qualityClamp(Math.min(window.devicePixelRatio, QUALITY_CEILING))
     if (q.fast >= q.patience && this.pixelRatio < ceiling) {
       this.setPixelRatio(Math.min(ceiling, this.pixelRatio + 0.25))
       q.fast = 0
+      // And each notch EARNED BACK makes the next one cheaper.
+      //
+      // Without this the doubling above is still a one-way ratchet, just a
+      // quieter one — it re-created the exact bug it was written to fix.
+      // Measured on the live build (`tools/probe-quality.mjs`): 180 long frames,
+      // three seconds of them, took the picture from 2.0 down to the 1.0 floor,
+      // and climbing back out cost 3600 consecutive good frames PER NOTCH —
+      // four solid minutes to undo three seconds. On a phone reporting a device
+      // pixel ratio of 3, sitting at 1.0 means a third-resolution image
+      // stretched over the display, which is exactly what "it looks blurry" is.
+      // The resource leak guaranteed the stalls; this is what made one stall
+      // permanent for the rest of the session.
+      //
+      // Halving keeps the entire point of the doubling — a genuinely borderline
+      // device drops again, re-doubles, and settles — while letting a device
+      // that has actually recovered take its resolution back at an accelerating
+      // rate rather than a punitive fixed one.
+      q.patience = Math.max(QUALITY_PATIENCE_MIN, Math.round(q.patience / 2))
     }
   }
 
@@ -898,9 +926,15 @@ class Game {
   /* ── frame ───────────────────────────────────────────────────────── */
 
   frame() {
-    const raw = this.clock.getDelta()
+    // Timer, not Clock: three deprecated Clock and warns about it on every
+    // load. Timer is read rather than sampled — update() once per frame, then
+    // getDelta/getElapsed return that same frame's numbers however often they
+    // are asked, which is also why `tools/probe-rim.mjs` can freeze the scene
+    // by simply not updating it.
+    this.timer.update()
+    const raw = this.timer.getDelta()
     const dt = Math.min(0.05, raw)
-    const t = this.clock.elapsedTime
+    const t = this.timer.getElapsed()
 
     // Judged on the real delta, not the clamped one — the clamp exists to keep
     // physics sane through a stall, and a stall is precisely what needs seeing.
