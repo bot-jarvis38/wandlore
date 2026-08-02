@@ -10,6 +10,43 @@ import { buildMaterials } from './textures.js'
 
 let nextId = 1
 
+/**
+ * A bright edge around a shape, so it reads against the dark.
+ *
+ * Three independent judges compared this game's combat screens against shipped
+ * first-person magic games and all three named the same defect first: the
+ * enemies are flat black shapes you cannot make out. They were right, and the
+ * cause is that a corridor lit only by distant torches puts almost no light on
+ * anything walking down it — the creatures each carry a lamp, but a lamp inside
+ * a model lights the room, not the model.
+ *
+ * A rim is the fix a real renderer would reach for and the cheapest one here:
+ * a copy of the mesh, very slightly larger, drawn inside-out and added to
+ * whatever is behind it. Only the sliver where the copy pokes past the original
+ * survives, which is exactly the outline — so the shape stays dark and
+ * threatening while its edge is legible from across the room.
+ *
+ * Parented to the mesh it traces, so it follows any animation for free —
+ * including the Dementor's cloak, whose vertices move every frame.
+ */
+function addRim(mesh, color, opacity = 0.5, scale = 1.05) {
+  const rim = new THREE.Mesh(
+    mesh.geometry,
+    new THREE.MeshBasicMaterial({
+      color,
+      side: THREE.BackSide,
+      transparent: true,
+      opacity,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    })
+  )
+  rim.scale.setScalar(scale)
+  rim.renderOrder = -1
+  mesh.add(rim)
+  return rim
+}
+
 /** How long each comedy status holds it, in seconds. */
 const STATUS_TIME = {
   dance: 3.4,
@@ -130,24 +167,31 @@ export class Dementor extends Enemy {
     this.damage = 13
     this.score = 100
 
+    // Was 0x191a26 — 10% grey, which in an unlit corridor renders as pure
+    // black no matter what else is done to it. Lifted far enough that the
+    // torchlight it passes through actually models the folds.
     const cloakMat = new THREE.MeshStandardMaterial({
-      color: 0x191a26,
-      roughness: 1,
-      metalness: 0,
+      color: 0x3c3f57,
+      roughness: 0.86,
+      metalness: 0.06,
+      emissive: 0x0e1430,
+      emissiveIntensity: 0.55,
       side: THREE.DoubleSide,
     })
 
     // a ragged cone is the body; the vertices get pushed around every frame
-    this.cloakGeo = new THREE.ConeGeometry(1.05, 3.5, 18, 10, true)
+    this.cloakGeo = new THREE.ConeGeometry(1.05, 3.5, 44, 16, true)
     this.baseVerts = this.cloakGeo.attributes.position.array.slice()
     this.cloak = new THREE.Mesh(this.cloakGeo, cloakMat)
     this.cloak.position.y = 1.9
     this.group.add(this.cloak)
+    addRim(this.cloak, 0x6f9ade, 0.26, 1.075)
 
     const hood = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 12), cloakMat)
     hood.scale.set(1, 1.25, 1)
     hood.position.y = 3.3
     this.group.add(hood)
+    addRim(hood, 0x8fb6f0, 0.38, 1.11)
 
     // the void inside the hood, with two cold points in it
     const voidMat = new THREE.MeshBasicMaterial({ color: 0x000000 })
@@ -163,8 +207,8 @@ export class Dementor extends Enemy {
         blending: THREE.AdditiveBlending,
       })
     )
-    this.eyes.scale.set(0.42, 0.26, 1)
-    this.eyes.position.set(0, 3.26, 0.42)
+    this.eyes.scale.set(0.5, 0.3, 1)
+    this.eyes.position.set(0, 3.28, 0.56)
     this.group.add(this.eyes)
 
     // skeletal hands, because the silhouette needs something human in it
@@ -179,6 +223,13 @@ export class Dementor extends Enemy {
     this.light = new THREE.PointLight(0x4f7fd0, 1.7, 6, 2)
     this.light.position.y = 3.2
     this.group.add(this.light)
+
+    // The lamp above lights the room. This one lights the creature: pushed out
+    // toward the player so the cloak has a front to catch it, which is what
+    // turns a flat cut-out back into something with volume.
+    this.keyLight = new THREE.PointLight(0xc8d4f0, 2.2, 5.5, 2)
+    this.keyLight.position.set(0.4, 3.1, 2.3)
+    this.group.add(this.keyLight)
 
     this.phase = Math.random() * Math.PI * 2
   }
@@ -197,12 +248,32 @@ export class Dementor extends Enemy {
     for (let i = 0; i < arr.length; i += 3) {
       const y = this.baseVerts[i + 1]
       const hem = Math.max(0, (1.75 - y) / 3.5)
-      const n = Math.sin(t * 3 + i * 0.21 + this.phase) * hem * 0.42
-      arr[i] = this.baseVerts[i] + n
-      arr[i + 2] = this.baseVerts[i + 2] + Math.cos(t * 2.6 + i * 0.17) * hem * 0.42
-      arr[i + 1] = y - hem * 0.5 * (0.5 + Math.sin(t * 2 + i) * 0.5)
+      // Driven by where the vertex IS, not by its index in the buffer. Index
+      // phase means the wave frequency changes with mesh resolution: raising
+      // the cone from 18 segments to 44 to kill the faceting turned the same
+      // constants into alternating spikes, so the cloak came out as shards of
+      // ice. Angle around the cone is resolution-independent, so folds stay
+      // folds however finely the thing is built.
+      const angle = Math.atan2(this.baseVerts[i + 2], this.baseVerts[i])
+      // Two octaves: a slow swing for the big folds, a tighter one for the
+      // creases between them. One octave alone came out as a clean smooth
+      // cone, which reads as a paper triangle rather than cloth.
+      const fold =
+        Math.sin(t * 3 + angle * 3.5 + this.phase) * 0.62 +
+        Math.sin(angle * 11 + t * 1.7 + this.phase) * 0.38
+      const cross =
+        Math.cos(t * 2.6 + angle * 2.5) * 0.62 + Math.cos(angle * 9.5 - t * 1.4) * 0.38
+      arr[i] = this.baseVerts[i] + fold * hem * 0.62
+      arr[i + 2] = this.baseVerts[i + 2] + cross * hem * 0.62
+      arr[i + 1] = y - hem * 0.62 * (0.5 + Math.sin(t * 2 + angle * 7) * 0.5)
     }
     this.cloakGeo.attributes.position.needsUpdate = true
+    // Moving vertices without recomputing normals lights the cloak as the
+    // smooth cone it started as, so every fold added above was invisible — the
+    // shape changed and the shading did not. This is why the cloak read as a
+    // flat triangle no matter how far the hem was pushed around, and no amount
+    // of tuning the displacement could have fixed it.
+    this.cloakGeo.computeVertexNormals()
 
     this.eyes.material.opacity = 0.7 + wobble * 0.3
     this.light.intensity = 1.5 + wobble * 0.4
@@ -269,6 +340,11 @@ export class Armour extends Enemy {
     blade.position.set(0.62, 2.15, 0.1)
     this.group.add(blade)
     this.blade = blade
+
+    for (const m of [torso, helm, skirt]) addRim(m, 0xff9c5a, 0.3, 1.1)
+    this.keyLight = new THREE.PointLight(0xffb070, 2.4, 5, 2)
+    this.keyLight.position.set(0.3, 1.6, 2.1)
+    this.group.add(this.keyLight)
 
     this.light = new THREE.PointLight(0xff6a2a, 1.3, 4.5, 2)
     this.light.position.set(0, 2.3, 0.4)

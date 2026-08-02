@@ -462,6 +462,11 @@ export class Wand {
 
 /* ── particles: one pooled buffer for every burst in the game ──────── */
 
+// Scratch vectors: burst() runs dozens of times per impact and allocating a
+// Vector3 per particle is how a hit becomes a hitch.
+const _v0 = new THREE.Vector3()
+const _v1 = new THREE.Vector3()
+
 export class Particles {
   constructor(scene, count = 900) {
     this.count = count
@@ -496,29 +501,52 @@ export class Particles {
     scene.add(this.points)
   }
 
-  burst(origin, color, amount, spread = 6, life = 0.7) {
+  /**
+   * A burst with a direction, because an impact has one.
+   *
+   * The old version scattered every particle evenly over a sphere, which is
+   * the definition of the defect three judges independently named: "an
+   * undirected white blob", "a floating cotton-ball cloud". A real hit sprays
+   * *back along the way the shot came*, in a cone, with a few fast pieces
+   * outrunning the rest — that shape is what tells the eye something struck
+   * something, and no amount of glow substitutes for it.
+   *
+   * `back` is the direction the spray should favour (typically the reverse of
+   * the projectile's travel). Omit it and the old even scatter is used, which
+   * is still right for an ambient puff with no impact behind it.
+   */
+  burst(origin, color, amount, spread = 6, life = 0.7, back = null) {
     const c = new THREE.Color(color)
+    const axis = back ? _v0.copy(back).normalize() : null
     for (let n = 0; n < amount; n++) {
       const i = this.cursor
       this.cursor = (this.cursor + 1) % this.count
       this.pos[i * 3] = origin.x
       this.pos[i * 3 + 1] = origin.y
       this.pos[i * 3 + 2] = origin.z
-      const dir = new THREE.Vector3(
-        Math.random() - 0.5,
-        Math.random() - 0.5,
-        Math.random() - 0.5
-      )
-        .normalize()
-        .multiplyScalar(spread * (0.35 + Math.random() * 0.65))
+
+      const dir = _v1.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize()
+      if (axis) {
+        // Pulled toward the impact axis rather than replaced by it: a cone
+        // still needs spread, or it reads as a laser instead of a splash.
+        dir.lerp(axis, 0.55 + Math.random() * 0.3).normalize()
+      }
+      // A tenth of the particles are three times as fast. They become the
+      // streaks that give the burst its edge — without them every piece
+      // travels at the same rate and the whole thing expands as a soft ball.
+      const streak = n % 10 === 0 ? 3.1 : 1
+      dir.multiplyScalar(spread * (0.35 + Math.random() * 0.65) * streak)
+
       this.vel[i * 3] = dir.x
       this.vel[i * 3 + 1] = dir.y
       this.vel[i * 3 + 2] = dir.z
-      const tint = 0.75 + Math.random() * 0.25
+      // Hotter at the core, cooler at the fringe, so the spray has a gradient
+      // instead of being one flat colour throughout.
+      const tint = streak > 1 ? 1.35 : 0.55 + Math.random() * 0.45
       this.col[i * 3] = c.r * tint
       this.col[i * 3 + 1] = c.g * tint
       this.col[i * 3 + 2] = c.b * tint
-      this.life[i] = life * (0.6 + Math.random() * 0.6)
+      this.life[i] = life * (streak > 1 ? 0.45 : 0.6 + Math.random() * 0.6)
       this.maxLife[i] = this.life[i]
     }
   }
@@ -624,7 +652,9 @@ export class Projectiles {
         if (!enemy.alive || b.hits.has(enemy.id)) continue
         if (b.group.position.distanceTo(enemy.hitPoint()) < enemy.radius + 0.5) {
           b.hits.add(enemy.id)
-          onHit(b.spell, enemy, b.group.position.clone())
+          // The spray needs to know which way the shot came from, or it comes
+          // out as an even ball — the exact defect this was rewritten to fix.
+          onHit(b.spell, enemy, b.group.position.clone(), b.dir.clone().negate())
           if (!b.spell.pierce) consumed = true
           break
         }

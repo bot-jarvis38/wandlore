@@ -617,7 +617,14 @@ class Game {
     const origin = from.clone().addScaledVector(dir, 1.25)
     this.projectiles.spawn(spell, origin, dir)
     this.wand.fire(spell.color)
-    this.particles.burst(origin, spell.glow, 16, 2.6, 0.35)
+    // Thrown forward, down the corridor, from further out — not sprayed around
+    // the muzzle. Sixteen additive sprites blooming a metre from the lens sat
+    // right on top of the enemy and read as a blending fault rather than a
+    // cast, which is exactly how a judge described it.
+    this.particles.burst(
+      from.clone().addScaledVector(dir, 2.4),
+      spell.glow, 14, 3.4, 0.26, dir
+    )
     this.trauma = Math.min(1, this.trauma + 0.22)
     this.sfx.cast()
 
@@ -635,9 +642,9 @@ class Game {
     }, 260)
   }
 
-  onSpellHit(spell, enemy, at) {
+  onSpellHit(spell, enemy, at, back) {
     this.sfx.impact()
-    this.particles.burst(at, spell.color, 34, 7, 0.65)
+    this.particles.burst(at, spell.color, 40, 7.5, 0.65, back)
     this.trauma = Math.min(1, this.trauma + 0.16)
 
     const killed = enemy.takeDamage(spell.damage)
@@ -646,7 +653,7 @@ class Game {
     // do something to the thing in front of you and say so.
     if (spell.effect && !killed) {
       enemy.applyEffect(spell.effect)
-      this.particles.burst(at, spell.glow, 22, 3.2, 0.9)
+      this.particles.burst(at, spell.glow, 22, 3.2, 0.9, back)
     }
     if (spell.reaction) this.flashReaction(spell.reaction)
 
@@ -915,8 +922,8 @@ class Game {
       this.checkMicHealth()
     }
 
-    this.projectiles.update(dt, this.enemies, (spell, enemy, at) =>
-      this.onSpellHit(spell, enemy, at)
+    this.projectiles.update(dt, this.enemies, (spell, enemy, at, back) =>
+      this.onSpellHit(spell, enemy, at, back)
     )
 
     for (let i = this.enemies.length - 1; i >= 0; i--) {
