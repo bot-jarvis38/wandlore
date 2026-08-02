@@ -50,6 +50,9 @@ const QUALITY_FLOOR = 1
 const QUALITY_START = 2
 const QUALITY_CEILING = 3
 
+/** Every resolution the renderer is ever set to passes through here. */
+const qualityClamp = n => Math.min(QUALITY_CEILING, Math.max(QUALITY_FLOOR, n))
+
 const params = new URLSearchParams(location.search)
 const DEBUG_STATE = params.get('state') // title | play | interlude | gameover
 const DEBUG_POPULATE = params.get('populate') // spawn a specific line-up for a shot
@@ -208,7 +211,7 @@ class Game {
       powerPreference: 'high-performance',
     })
     // Where the resolution starts. It does not stay here — see `tuneQuality`.
-    this.pixelRatio = Math.min(window.devicePixelRatio, QUALITY_START)
+    this.pixelRatio = qualityClamp(Math.min(window.devicePixelRatio, QUALITY_START))
     this.renderer.setPixelRatio(this.pixelRatio)
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -322,14 +325,21 @@ class Game {
       q.patience = Math.min(3600, q.patience * 2)
       return
     }
-    const ceiling = Math.min(window.devicePixelRatio, QUALITY_CEILING)
+    const ceiling = qualityClamp(Math.min(window.devicePixelRatio, QUALITY_CEILING))
     if (q.fast >= q.patience && this.pixelRatio < ceiling) {
       this.setPixelRatio(Math.min(ceiling, this.pixelRatio + 0.25))
       q.fast = 0
     }
   }
 
-  setPixelRatio(next) {
+  setPixelRatio(raw) {
+    // Clamped here rather than only where the value is computed. An independent
+    // review of the first version of this fix found the floor held on the way
+    // down and nowhere else: a browser zoomed out reports a ratio below one, so
+    // the game opened below the floor and could never climb, because its own
+    // ceiling was that same sub-one number. The rule is a property of the
+    // renderer, so it belongs on the one function that sets it.
+    const next = qualityClamp(raw)
     if (next === this.pixelRatio) return
     this.pixelRatio = next
     this.renderer.setPixelRatio(next)

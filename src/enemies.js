@@ -191,10 +191,10 @@ export class Dementor extends Enemy {
       roughness: 0.9,
       metalness: 0.05,
       emissive: 0x090d1c,
-      emissiveIntensity: 0.2,
+      emissiveIntensity: 0.28,
       side: THREE.DoubleSide,
     })
-    rimLight(cloakMat, 0x9dc0f5, 0.34, 5.5)
+    rimLight(cloakMat, 0x9dc0f5, 0.42, 4.6)
 
     // a ragged cone is the body; the vertices get pushed around every frame
     this.cloakGeo = new THREE.ConeGeometry(1.05, 3.5, 44, 16, true)
@@ -344,9 +344,19 @@ export class Armour extends Enemy {
 
     this.limbs = []
     for (const side of [-1, 1]) {
+      // Pulled in and raised until the top of the capsule is inside the torso.
+      // At 0.62 the arms cleared the shell entirely and, in a dark corridor,
+      // read as two limbs floating beside the body rather than attached to it —
+      // one of the tells that makes a build look unfinished at a glance. A
+      // pauldron over the joint hides the seam the overlap creates.
       const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.13, 0.68, 4, 8), steel)
-      arm.position.set(side * 0.62, 1.5, 0)
+      arm.position.set(side * 0.53, 1.58, 0)
       this.group.add(arm)
+
+      const pauldron = new THREE.Mesh(new THREE.SphereGeometry(0.19, 10, 8), steel)
+      pauldron.position.set(side * 0.5, 1.94, 0)
+      pauldron.scale.set(1, 0.8, 1)
+      this.group.add(pauldron)
       this.limbs.push({ mesh: arm, side, base: 1.5 })
 
       const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.15, 0.62, 4, 8), steel)

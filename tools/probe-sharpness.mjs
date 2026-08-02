@@ -79,6 +79,35 @@ const floorHeld = await p.evaluate(() => {
 })
 console.log('floor after a long stall:', floorHeld, floorHeld >= 1 ? '(ok — never sub-native)' : '(BLURRY)')
 
+/*
+ * The floor holding on the way down is not the same as the floor holding. It
+ * was checked only there once, and an independent review found the start and
+ * the ceiling both went under it on a browser reporting a ratio below one — so
+ * the game opened blurry and could never climb out. Every entry point now, not
+ * just the interesting one.
+ */
+const clamps = await p.evaluate(() => {
+  const g = window.__game
+  const before = g.pixelRatio
+  const out = {}
+  for (const n of [0.5, 0.75, 1, 2, 4, 99]) {
+    g.setPixelRatio(n)
+    out[n] = { pr: g.pixelRatio, buffer: g.composer.renderTarget1.width }
+  }
+  g.setPixelRatio(before)
+  return out
+})
+for (const [asked, got] of Object.entries(clamps)) {
+  const ok = got.pr >= 1 && got.pr <= 3
+  // and the scene buffer must have actually followed, not just the canvas
+  const tracked = Math.abs(got.buffer - 430 * got.pr) < 2
+  console.log(
+    `  asked ${asked.padStart(4)} -> ${String(got.pr).padEnd(4)} buffer ${String(got.buffer).padEnd(6)}`,
+    ok ? '' : 'OUT OF RANGE',
+    tracked ? '' : 'BUFFER DID NOT FOLLOW'
+  )
+}
+
 /* css width * 3 is what a sharp frame would be drawn at on this device */
 const nativeW = 430 * 3
 console.log(
