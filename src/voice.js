@@ -146,7 +146,17 @@ export function phoneticKey(s) {
     // a doubled letter is one sound — before the vowels flatten, so that a
     // genuine two-vowel run survives as two slots
     .replace(/(.)\1+/g, '$1')
-    .replace(/[aeiou]/g, 'a')
+    // Two vowel classes, front and back, not one. Flattening every vowel to a
+    // single letter was too lossy: it left short words with keys so generic
+    // that ordinary speech landed on them — "did you see that" fired REDUCTO,
+    // "in the studio" fired STUPEFY. Splitting them in two keeps the forgiveness
+    // that matters (a recogniser confuses e for i constantly, and o for u) while
+    // refusing the collisions that only happened because everything was one
+    // letter. Measured on the noise list in tools/score-bench.mjs, it is better
+    // on both sides at once: fewer wrong fires AND more correct attempts
+    // accepted, which is rare enough to be worth writing down.
+    .replace(/[aei]/g, 'a')
+    .replace(/[ou]/g, 'o')
 }
 
 /**
@@ -255,7 +265,7 @@ export function prefixMatch(transcript, spell) {
 export const MATCH_THRESHOLD = 0.66
 
 /**
- * Three characters of slop, or 44% of the word, whichever is kinder.
+ * Three characters of slop, or 48% of the word, whichever is kinder.
  *
  * A flat ratio is the wrong shape for short words. Recognition error is
  * roughly per-character, so the *rate* is stable across lengths but the
@@ -267,18 +277,27 @@ export const MATCH_THRESHOLD = 0.66
  * floor is what fixes that; 21 spells with only one on screen at a time is why
  * it costs nothing.
  *
- * The rate went 36% → 44% after the player reported correct words still being
- * refused: at a 30% character error rate that is 83% → 94% of correct attempts
- * accepted, and at 40% it is 57% → 74%. What it buys the other way is small and
- * one-directional — 1 phrase in 252 of ordinary English speech now fires
- * something, and 4 pairs of spells in 420 accept each other. Both of those
- * *grant* a cast the player did not earn; neither can refuse one they did. A
- * game that occasionally gives you a free hit is not the thing that reads as
- * broken. A game that ignores you is.
+ * The rate went 36% → 44% → 48%, both times after the player reported correct
+ * words still being refused. At a 40% character error rate that is 57% → 74% →
+ * 79% of correct attempts accepted.
+ *
+ * The reason 48% is affordable is the two-class phonetic key above, not
+ * generosity: the two changes were measured together and the pair is better on
+ * both sides than what shipped before it — 20 wrong fires in 1218 lines of
+ * ordinary speech against 23, and 79% of badly-heard correct attempts accepted
+ * against 74%. Read the first number with suspicion if it ever looks too good:
+ * an earlier version of this comment claimed 1 in 252, which was true only
+ * because the noise list it was measured on had twelve entries and none of them
+ * were the long latinate words a recogniser actually reaches for.
+ *
+ * The one thing that did get worse is spells accepting each other, 4 pairs in
+ * 420 to 7. That costs nothing in play — one incantation is on screen at a time
+ * and the player is reading it — but it is the number to watch if the game ever
+ * puts two spells up at once.
  */
 export function thresholdFor(spell) {
   const n = spell.word.replace(/\s/g, '').length
-  const allowed = Math.max(3, n * 0.44)
+  const allowed = Math.max(3, n * 0.48)
   return Math.max(0.5, 1 - allowed / n)
 }
 

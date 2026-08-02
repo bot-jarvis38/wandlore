@@ -35,6 +35,21 @@ const DEATH_GRACE_MS = 900
  */
 const STITCH_MS = 2600
 
+/**
+ * The lowest the adaptive resolution may ever go: one rendered pixel per CSS
+ * pixel. A slow phone is allowed to give up supersampling; it is not allowed to
+ * hand the browser an image smaller than the screen and let it stretch.
+ */
+const QUALITY_FLOOR = 1
+/**
+ * Where it starts, and how high it may climb. Starting at native on a phone
+ * reporting 3 costs over twice the pixels of a 2, which is a stutter in the
+ * first seconds — the worst moment to have one. So it opens at 2 and is allowed
+ * to climb to native only after the device has proved it has the frames spare.
+ */
+const QUALITY_START = 2
+const QUALITY_CEILING = 3
+
 const params = new URLSearchParams(location.search)
 const DEBUG_STATE = params.get('state') // title | play | interlude | gameover
 const DEBUG_POPULATE = params.get('populate') // spawn a specific line-up for a shot
@@ -193,7 +208,7 @@ class Game {
       powerPreference: 'high-performance',
     })
     // Where the resolution starts. It does not stay here — see `tuneQuality`.
-    this.pixelRatio = Math.min(window.devicePixelRatio, 2)
+    this.pixelRatio = Math.min(window.devicePixelRatio, QUALITY_START)
     this.renderer.setPixelRatio(this.pixelRatio)
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.0
@@ -253,8 +268,12 @@ class Game {
     const w = window.innerWidth
     const h = window.innerHeight
     this.renderer.setSize(w, h, false)
+    // Sizes every pass too, in *device* pixels. Do not follow this with a
+    // manual `bloom.setSize(w, h)`: that passes CSS pixels back in and the
+    // bloom pass halves whatever it is handed, so the glow ends up computed at
+    // a quarter of the frame and smeared back over it. It read as the whole
+    // picture being soft.
     this.composer.setSize(w, h)
-    this.bloom.setSize(w, h)
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
   }
@@ -271,9 +290,15 @@ class Game {
    *
    * Only ever moves on a sustained run of frames, so one hitch (a wave
    * spawning, a garbage collection) cannot knock the resolution down.
+   *
+   * The floor is one rendered pixel per CSS pixel and must stay there. Below
+   * that the browser stretches the frame back up to fill the screen, and the
+   * softness is immediately obvious on a phone — the first version of this
+   * bottomed out at 0.75 on a device reporting 3, which meant a quarter-size
+   * image blown up over the display. That is what "super blurry" was.
    */
   tuneQuality(dt) {
-    const q = this._q ?? (this._q = { slow: 0, fast: 0, floor: 0.75, lifted: 0 })
+    const q = this._q ?? (this._q = { slow: 0, fast: 0, patience: 240 })
     const ms = dt * 1000
 
     if (ms > 20.5) {
@@ -286,18 +311,20 @@ class Game {
       return
     }
 
-    if (q.slow >= 45 && this.pixelRatio > q.floor) {
-      this.setPixelRatio(Math.max(q.floor, this.pixelRatio - 0.25))
+    if (q.slow >= 45 && this.pixelRatio > QUALITY_FLOOR) {
+      this.setPixelRatio(Math.max(QUALITY_FLOOR, this.pixelRatio - 0.25))
       q.slow = 0
+      // Each drop makes the next attempt to climb back more cautious, so a
+      // device sitting on the boundary settles instead of oscillating. A hard
+      // cap on the number of lifts did that too, but it was a one-way ratchet:
+      // a phone that dipped once during a busy wave stayed soft for the rest
+      // of the session even when it had room to spare.
+      q.patience = Math.min(3600, q.patience * 2)
       return
     }
-    // Climbing back is rationed. Without a cap a device sitting right on the
-    // boundary oscillates between two resolutions forever, which is more
-    // distracting than simply running at the lower one.
-    const ceiling = Math.min(window.devicePixelRatio, 2)
-    if (q.fast >= 240 && this.pixelRatio < ceiling && q.lifted < 2) {
+    const ceiling = Math.min(window.devicePixelRatio, QUALITY_CEILING)
+    if (q.fast >= q.patience && this.pixelRatio < ceiling) {
       this.setPixelRatio(Math.min(ceiling, this.pixelRatio + 0.25))
-      q.lifted++
       q.fast = 0
     }
   }
@@ -306,6 +333,12 @@ class Game {
     if (next === this.pixelRatio) return
     this.pixelRatio = next
     this.renderer.setPixelRatio(next)
+    // The composer caches the ratio it was built with and sizes its offscreen
+    // buffers by it, so without this the scene kept being drawn at the old
+    // resolution and was merely squashed into a smaller canvas on the way out:
+    // the full cost of the frame we were trying to avoid, and a blurrier
+    // picture for it. Must come before resize(), which reads it back.
+    this.composer.setPixelRatio(next)
     this.resize()
   }
 

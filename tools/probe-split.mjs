@@ -30,44 +30,51 @@ const fresh = async spell => {
 
 /*
  * The whole complaint, in one check. Split at a seam where NEITHER half clears
- * the bar on its own — "taranta" scores 0.54 and "llegra" 0.38 against a bar of
- * 0.56 — so the only way this fires is if the two are put back together.
+ * the bar on its own, so the only way this can fire is if the two are put back
+ * together.
+ *
+ * The premise is asserted, not assumed. It was assumed once, on a different
+ * seam, and then the matching bar was widened for unrelated reasons until the
+ * first half fired by itself — at which point this check still printed a pass
+ * while testing nothing at all. If `eitherHalfAlone` is ever true the seam has
+ * gone stale and the result below is meaningless; pick a new one with
+ * tools/_tmp-seam-style search over the spell list.
  */
-await fresh('TARANTALLEGRA')
+await fresh('DIMINUENDO')
 console.log(
   'split word fires (want true)     :',
   await p.evaluate(async () => {
     const g = window.__game
-    g.onHeard('taranta', true) // session one ends mid-word
+    g.onHeard('dimin', true) // session one ends mid-word
     const halfway = g.casting
     await new Promise(r => setTimeout(r, 900)) // engine restarting, game deaf
-    g.onHeard('llegra', true) // session two brings the rest
+    g.onHeard('uendo', true) // session two brings the rest
     return { eitherHalfAlone: halfway, together: g.casting }
   })
 )
 
 /* a fragment arriving as an interim result must glue on too, not just finals */
-await fresh('TARANTALLEGRA')
+await fresh('DIMINUENDO')
 console.log(
   'interim tail glues on (true)     :',
   await p.evaluate(async () => {
     const g = window.__game
-    g.onHeard('taranta', true)
+    g.onHeard('dimin', true)
     await new Promise(r => setTimeout(r, 600))
-    g.onHeard('llegra', false)
+    g.onHeard('uendo', false)
     return g.casting
   })
 )
 
 /* the guard: fragments that are too old must not be welded together */
-await fresh('TARANTALLEGRA')
+await fresh('DIMINUENDO')
 console.log(
   'stale halves fire (want false)   :',
   await p.evaluate(async () => {
     const g = window.__game
-    g.onHeard('taranta', true)
+    g.onHeard('dimin', true)
     await new Promise(r => setTimeout(r, 3000)) // longer than the stitch window
-    g.onHeard('llegra', true)
+    g.onHeard('uendo', true)
     return g.casting
   })
 )

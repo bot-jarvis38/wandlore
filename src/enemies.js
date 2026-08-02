@@ -20,31 +20,45 @@ let nextId = 1
  * anything walking down it — the creatures each carry a lamp, but a lamp inside
  * a model lights the room, not the model.
  *
- * A rim is the fix a real renderer would reach for and the cheapest one here:
- * a copy of the mesh, very slightly larger, drawn inside-out and added to
- * whatever is behind it. Only the sliver where the copy pokes past the original
- * survives, which is exactly the outline — so the shape stays dark and
- * threatening while its edge is legible from across the room.
+ * The first attempt at this drew a slightly larger inside-out copy of the mesh
+ * behind the original, so the sliver poking past became an outline. It is a
+ * real technique and it was the wrong one here, for a reason worth keeping:
+ * scaling a mesh up widens the gap in proportion to how far each vertex sits
+ * from the model's origin. On a three-and-a-half metre cloak the hem ended up
+ * with a hand-width white band while the head, a small sphere at its own
+ * centre, got a perfectly even ring. Read together they looked like a sticker —
+ * cheaper than the flat silhouette they replaced.
  *
- * Parented to the mesh it traces, so it follows any animation for free —
- * including the Dementor's cloak, whose vertices move every frame.
+ * This is what the effect is actually supposed to be: light that grazes. The
+ * glow is computed per pixel from how far the surface has turned away from the
+ * camera, so it is absent where a surface faces you and brightest exactly along
+ * the silhouette, with a real falloff between. It rides the mesh's own normals,
+ * which means it follows the Dementor's cloak as its vertices move each frame,
+ * and it needs no second mesh to draw.
  */
-function addRim(mesh, color, opacity = 0.5, scale = 1.05) {
-  const rim = new THREE.Mesh(
-    mesh.geometry,
-    new THREE.MeshBasicMaterial({
-      color,
-      side: THREE.BackSide,
-      transparent: true,
-      opacity,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
-  )
-  rim.scale.setScalar(scale)
-  rim.renderOrder = -1
-  mesh.add(rim)
-  return rim
+function rimLight(material, color, strength = 0.5, power = 3.2) {
+  const rim = new THREE.Color(color)
+  material.onBeforeCompile = shader => {
+    shader.uniforms.rimColor = { value: rim }
+    shader.uniforms.rimStrength = { value: strength }
+    shader.uniforms.rimPower = { value: power }
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        `#include <common>
+         uniform vec3 rimColor;
+         uniform float rimStrength;
+         uniform float rimPower;`
+      )
+      .replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+         float facing = abs(dot(normalize(vNormal), normalize(vViewPosition)));
+         gl_FragColor.rgb += rimColor * pow(1.0 - facing, rimPower) * rimStrength;`
+      )
+  }
+  material.needsUpdate = true
+  return material
 }
 
 /** How long each comedy status holds it, in seconds. */
@@ -168,16 +182,19 @@ export class Dementor extends Enemy {
     this.score = 100
 
     // Was 0x191a26 — 10% grey, which in an unlit corridor renders as pure
-    // black no matter what else is done to it. Lifted far enough that the
-    // torchlight it passes through actually models the folds.
+    // black no matter what else is done to it. Then it was 0x3c3f57, which
+    // over-corrected into bright blue plastic. This sits between: dark enough
+    // to stay a shadow at the end of a corridor, light enough that the folds
+    // model when something actually shines on it.
     const cloakMat = new THREE.MeshStandardMaterial({
-      color: 0x3c3f57,
-      roughness: 0.86,
-      metalness: 0.06,
-      emissive: 0x0e1430,
-      emissiveIntensity: 0.55,
+      color: 0x1b1f2e,
+      roughness: 0.9,
+      metalness: 0.05,
+      emissive: 0x090d1c,
+      emissiveIntensity: 0.2,
       side: THREE.DoubleSide,
     })
+    rimLight(cloakMat, 0x9dc0f5, 0.34, 5.5)
 
     // a ragged cone is the body; the vertices get pushed around every frame
     this.cloakGeo = new THREE.ConeGeometry(1.05, 3.5, 44, 16, true)
@@ -185,13 +202,11 @@ export class Dementor extends Enemy {
     this.cloak = new THREE.Mesh(this.cloakGeo, cloakMat)
     this.cloak.position.y = 1.9
     this.group.add(this.cloak)
-    addRim(this.cloak, 0x6f9ade, 0.26, 1.075)
 
     const hood = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 12), cloakMat)
     hood.scale.set(1, 1.25, 1)
     hood.position.y = 3.3
     this.group.add(hood)
-    addRim(hood, 0x8fb6f0, 0.38, 1.11)
 
     // the void inside the hood, with two cold points in it
     const voidMat = new THREE.MeshBasicMaterial({ color: 0x000000 })
@@ -224,11 +239,14 @@ export class Dementor extends Enemy {
     this.light.position.y = 3.2
     this.group.add(this.light)
 
-    // The lamp above lights the room. This one lights the creature: pushed out
-    // toward the player so the cloak has a front to catch it, which is what
-    // turns a flat cut-out back into something with volume.
-    this.keyLight = new THREE.PointLight(0xc8d4f0, 2.2, 5.5, 2)
-    this.keyLight.position.set(0.4, 3.1, 2.3)
+    // The lamp above lights the room. This one lights the creature. It sits
+    // behind and above rather than out in front: a light in the player's face
+    // flattens whatever it hits, which is how the cloak came out looking like a
+    // lit-up cone. From back here it catches the shoulders and the top of the
+    // hood and leaves the front in shadow, so the shape reads without the thing
+    // ever stopping being dark.
+    this.keyLight = new THREE.PointLight(0xbcd0f0, 1.9, 6, 2)
+    this.keyLight.position.set(0.7, 3.6, -1.9)
     this.group.add(this.keyLight)
 
     this.phase = Math.random() * Math.PI * 2
@@ -300,6 +318,8 @@ export class Armour extends Enemy {
     const mats = buildMaterials()
     const steel = mats.pewter.clone()
     steel.color.setHex(0x9aa0ab)
+    // warm, because the only thing lighting this corridor is torches
+    rimLight(steel, 0xffa055, 0.4, 4.5)
 
     const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.42, 1.15, 10), steel)
     torso.position.y = 1.55
@@ -341,9 +361,8 @@ export class Armour extends Enemy {
     this.group.add(blade)
     this.blade = blade
 
-    for (const m of [torso, helm, skirt]) addRim(m, 0xff9c5a, 0.3, 1.1)
-    this.keyLight = new THREE.PointLight(0xffb070, 2.4, 5, 2)
-    this.keyLight.position.set(0.3, 1.6, 2.1)
+    this.keyLight = new THREE.PointLight(0xffb070, 2.2, 5.5, 2)
+    this.keyLight.position.set(0.5, 2.4, -1.6)
     this.group.add(this.keyLight)
 
     this.light = new THREE.PointLight(0xff6a2a, 1.3, 4.5, 2)
