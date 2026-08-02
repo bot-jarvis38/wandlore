@@ -19,6 +19,20 @@ const LANG = 'en-US'
 const LOCAL_OPTIONS = { langs: [LANG], processLocally: true }
 
 /**
+ * A recognition session that ends sooner than this never really started — it
+ * is a failure wearing the same event as a finished utterance. Generous on
+ * purpose: a genuine "you said nothing" session lasts seconds, so there is a
+ * wide gap between the two and nothing borderline to get wrong.
+ */
+const STILLBORN_MS = 350
+/** First backoff step after a stillborn session, doubling from here. */
+const RETRY_BASE_MS = 150
+/** And where the doubling stops. */
+const RETRY_CEILING_MS = 4000
+/** After this many failures in a row, say so instead of claiming to listen. */
+const STALL_AFTER = 4
+
+/**
  * Where the listening actually happens. Not a guess — set from what the
  * browser reports, and shown to the player, because "sometimes it's fast and
  * sometimes it isn't" is exactly what a network round-trip feels like and the
@@ -285,6 +299,18 @@ export class VoiceListener {
     /** Diagnostics: how often the engine dropped us, and when it last heard anything. */
     this.restarts = 0
     this.lastHeardAt = 0
+    /** Consecutive sessions that died before they got going. Drives the backoff. */
+    this.failures = 0
+    this.startedAt = 0
+    this._retry = null
+  }
+
+  restartIn(ms) {
+    clearTimeout(this._retry)
+    this._retry = setTimeout(() => {
+      this._retry = null
+      if (this.wantsToRun) this.start()
+    }, ms)
   }
 
   /** Ask for the mic up front, so the in-game prompt isn't a surprise. */
@@ -328,6 +354,9 @@ export class VoiceListener {
 
     rec.onresult = event => {
       this.lastHeardAt = performance.now()
+      // Heard something, so this engine is working — forget any earlier run of
+      // failures rather than carrying a stale backoff into a healthy session.
+      this.failures = 0
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i]
         // every alternative is a chance for the incantation to be in there
@@ -338,6 +367,7 @@ export class VoiceListener {
     }
 
     rec.onerror = event => {
+      this.onEngineError?.(event.error)
       // The device said it could listen locally and then couldn't. Better a
       // slow game than a deaf one: give the on-device path up for this session
       // and let onend bring us back on the network engine.
@@ -357,35 +387,71 @@ export class VoiceListener {
       }
     }
 
-    // Every engine ends the session on its own: Chrome after a pause, iOS
-    // Safari after every single utterance regardless of `continuous`. Whatever
-    // ends it, the game is deaf until it comes back — and the old 220ms delay
-    // sat on top of the engine's own start-up latency, so a spell spoken right
-    // after the last one was simply never heard. Restart immediately.
+    /*
+     * Every engine ends the session on its own: Chrome after a pause, iOS
+     * Safari after every single utterance regardless of `continuous`. Whatever
+     * ends it, the game is deaf until it comes back, and a delay here sits on
+     * top of the engine's own start-up latency — so a finished utterance
+     * restarts instantly and that must not change.
+     *
+     * A *failed* session is the opposite case and used to be treated the same
+     * way. When the engine cannot start at all — no microphone, no network, a
+     * device that revoked capture — it ends immediately, we restart it
+     * immediately, and it ends immediately again. Measured against real Chrome
+     * with a broken capture device that ran at 11,845 restarts in nine seconds
+     * (`tools/play-aloud.mjs`), which pins a core, starves the frame loop and
+     * makes the whole game stutter — while the mic pill still cheerfully reads
+     * LISTENING.
+     *
+     * The two are told apart by how long the session lived, not by the error
+     * code: an engine that ran and heard nothing is fine, one that never got
+     * going is not. That test needs no list of error strings to stay correct.
+     */
     rec.onend = () => {
       this.recognition = null
       if (!this.wantsToRun) {
         this.setState('idle')
         return
       }
+
+      const lived = performance.now() - this.startedAt
+      if (lived < STILLBORN_MS) this.failures++
+      else this.failures = 0
+
       this.restarts++
-      this.setState('restarting')
-      this.start()
-      // A failed synchronous restart (engine still tearing down) leaves us
-      // with no recogniser at all, which is the silent-death case. Retry.
-      if (!this.recognition) setTimeout(() => this.wantsToRun && this.start(), 120)
+      this.setState(this.failures >= STALL_AFTER ? 'stalled' : 'restarting')
+
+      if (this.failures === 0) {
+        this.start()
+        // A failed synchronous restart (engine still tearing down) leaves us
+        // with no recogniser at all, which is the silent-death case. Retry.
+        if (!this.recognition) this.restartIn(120)
+        return
+      }
+      // Backing off doubles each time to a ceiling, so a device that is simply
+      // never going to work costs one attempt every few seconds instead of
+      // thousands, and recovers on its own the moment it can.
+      this.restartIn(Math.min(RETRY_CEILING_MS, RETRY_BASE_MS * 2 ** (this.failures - 1)))
     }
 
     this.recognition = rec
+    this.startedAt = performance.now()
     try {
       rec.start()
     } catch {
       this.recognition = null
+      // Throwing out of start() is itself a stillborn session; without this the
+      // caller sees no recogniser and no failure recorded.
+      this.failures++
+      this.restartIn(Math.min(RETRY_CEILING_MS, RETRY_BASE_MS * 2 ** (this.failures - 1)))
     }
   }
 
   stop() {
     this.wantsToRun = false
+    clearTimeout(this._retry)
+    this._retry = null
+    this.failures = 0
     if (this.recognition) {
       try {
         this.recognition.stop()

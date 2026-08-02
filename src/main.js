@@ -28,6 +28,12 @@ import {
 const SPEECH_FLIGHT_MS = 2200
 /** And how long the ending is held open for a transcript still in the air. */
 const DEATH_GRACE_MS = 900
+/**
+ * How long a heard fragment stays available to be glued onto the next one.
+ * Long enough to cover a recogniser restart (roughly a second on iOS Safari),
+ * short enough that two genuinely separate attempts never merge into one.
+ */
+const STITCH_MS = 2600
 
 const params = new URLSearchParams(location.search)
 const DEBUG_STATE = params.get('state') // title | play | interlude | gameover
@@ -412,6 +418,7 @@ class Game {
 
     this.bestHeard = 0
     this.casting = false
+    this.heardParts = []
     this.renderWord(0)
     this.showMatch(0)
     ui.incantation.classList.remove('success', 'fail')
@@ -475,6 +482,32 @@ class Game {
     this.speechStartedAt = performance.now()
   }
 
+  /**
+   * Glue an incantation back together when the recogniser cuts it in half.
+   *
+   * This is the reported symptom, exactly: "it detects some of it, pauses for
+   * a second or two, then resumes and finishes." The engine ends its session
+   * mid-word — iOS Safari does this after every utterance no matter what you
+   * ask for — and coming back takes it the better part of a second. Neither
+   * half is the spell. "expelli" scores nothing, "armus" scores nothing, and
+   * the player who said the whole word perfectly gets nothing twice.
+   *
+   * So the pieces are scored joined as well as alone. Restarting faster cannot
+   * fix this, because the gap belongs to the engine; the only way through is
+   * to stop throwing away what was already heard.
+   */
+  stitch(transcript, isFinal) {
+    const now = performance.now()
+    const parts = (this.heardParts ?? []).filter(p => now - p.at < STITCH_MS)
+    this.heardParts = parts
+    if (isFinal && transcript.trim()) parts.push({ text: transcript.trim(), at: now })
+    if (!parts.length) return transcript
+    // The tail is the current utterance either way, so a fragment that arrives
+    // as an interim result still gets glued to whatever came before it.
+    const joined = isFinal ? parts.map(p => p.text) : [...parts.map(p => p.text), transcript]
+    return joined.join(' ')
+  }
+
   /** Is a word still somewhere between the player's mouth and the transcript? */
   speechInFlight(now = performance.now()) {
     return this.speechStartedAt > 0 && now - this.speechStartedAt < SPEECH_FLIGHT_MS
@@ -517,7 +550,7 @@ class Game {
     if (!this.speechInFlight()) this.speechStartedAt = performance.now()
 
     const said = transcript.trim()
-    const score = scoreUtterance(transcript, this.spell)
+    const score = scoreUtterance(this.stitch(transcript, isFinal), this.spell)
     const bar = thresholdFor(this.spell)
 
     // Shown as a share of THIS word's bar, not as a raw similarity — so a full
@@ -567,6 +600,7 @@ class Game {
     this.lastCastAt = performance.now()
     if (source === 'voice') this.rollBackLateHit()
     this.speechStartedAt = 0
+    this.heardParts = []
 
     const spell = this.spell
     this.attempts++
@@ -775,8 +809,18 @@ class Game {
     if (this.silentMode) return
     const where = this.micLabel()
     ui.micText.textContent =
-      state === 'listening' ? where : state === 'denied' ? 'MUTED' : 'RE-LISTENING'
+      state === 'listening'
+        ? where
+        : state === 'denied'
+          ? 'MUTED'
+          : // The engine keeps dying on start-up. Saying LISTENING here is a
+            // lie the player has no way to catch, and it is the exact lie that
+            // made the stutter so hard to place.
+            state === 'stalled'
+            ? 'MIC WON’T START — TAP'
+            : 'RE-LISTENING'
     ui.micState.classList.toggle('muted', state === 'denied')
+    ui.micState.classList.toggle('deaf', state === 'stalled')
     ui.micState.classList.toggle('remote', engine.mode === 'network')
   }
 
@@ -905,6 +949,9 @@ window.__game = game
 // Which speech engine we ended up on, readable from a probe and from a phone's
 // dev console — the one question you cannot answer by looking at the game.
 window.__voice = { engine }
+// So a test can pin the word it is about to speak aloud, in the ordinary flow
+// rather than the debug one — the mic only exists on the real path.
+window.__allSpells = SPELLS
 game.frame()
 
 $('start-button').addEventListener('click', () => game.begin(true))
