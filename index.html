@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#07060c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Wandlore — Voice Duel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+
+      <!-- in-run HUD -->
+      <div id="hud" class="hidden">
+        <div class="hud-top">
+          <div class="vitals">
+            <div class="vital-label">VITALITY</div>
+            <div class="bar"><div id="health-fill" class="bar-fill"></div></div>
+          </div>
+          <div class="run-stats">
+            <div id="wave-label" class="wave">THE GRAND STAIRCASE</div>
+            <div id="score" class="score">0</div>
+          </div>
+        </div>
+
+        <div id="incantation" class="incantation">
+          <div class="cue">SPEAK THE INCANTATION</div>
+          <div id="spell-word" class="word">EXPELLIARMUS</div>
+          <div class="cast-meter"><div id="cast-fill" class="cast-fill"></div></div>
+          <div id="heard" class="heard"></div>
+        </div>
+
+        <div class="hud-bottom">
+          <div id="mic-state" class="mic-state">
+            <span class="mic-dot"></span><span id="mic-text">LISTENING</span>
+          </div>
+          <button id="cast-button" class="cast-button hidden">TAP TO CAST</button>
+        </div>
+
+        <div id="damage-flash" class="damage-flash"></div>
+      </div>
+
+      <!-- title -->
+      <div id="title" class="overlay">
+        <div class="overlay-inner">
+          <div class="sigil">✦</div>
+          <h1>WANDLORE</h1>
+          <p class="tagline">A duel fought with your voice</p>
+          <p class="blurb">
+            The castle has turned against you. Raise your wand, read the incantation the
+            spellbook offers, and <em>say it out loud</em> — the word is the trigger.
+          </p>
+          <button id="start-button" class="primary">BEGIN THE DUEL</button>
+          <button id="start-silent" class="secondary">Play without a microphone</button>
+          <p class="fineprint">Speak clearly. Best on a phone, held upright.</p>
+        </div>
+      </div>
+
+      <!-- mic permission -->
+      <div id="permission" class="overlay hidden">
+        <div class="overlay-inner">
+          <div class="sigil">◈</div>
+          <h2>LEND ME YOUR VOICE</h2>
+          <p class="blurb">
+            Allow the microphone when your browser asks. Nothing leaves your phone —
+            the castle listens locally.
+          </p>
+          <div id="permission-status" class="status">Awaiting permission…</div>
+          <button id="permission-retry" class="secondary hidden">Play without a microphone</button>
+        </div>
+      </div>
+
+      <!-- between waves -->
+      <div id="interlude" class="overlay hidden">
+        <div class="overlay-inner">
+          <div class="sigil">✧</div>
+          <h2 id="interlude-title">THE CORRIDOR FALLS SILENT</h2>
+          <div class="tally">
+            <div><span id="tally-cast">0</span><label>spells landed</label></div>
+            <div><span id="tally-accuracy">100%</span><label>incantation</label></div>
+            <div><span id="tally-best">0</span><label>best streak</label></div>
+          </div>
+          <p id="interlude-next" class="blurb">Something heavier is coming up the stairs.</p>
+          <button id="interlude-button" class="primary">ONWARD</button>
+        </div>
+      </div>
+
+      <!-- defeat -->
+      <div id="gameover" class="overlay hidden">
+        <div class="overlay-inner">
+          <div class="sigil dim">✖</div>
+          <h2>YOUR WAND FALLS</h2>
+          <div class="tally">
+            <div><span id="final-score">0</span><label>score</label></div>
+            <div><span id="final-wave">1</span><label>floors held</label></div>
+            <div><span id="final-best">0</span><label>best streak</label></div>
+          </div>
+          <button id="retry-button" class="primary">DUEL AGAIN</button>
+        </div>
+      </div>
+
+      <div id="loader" class="overlay">
+        <div class="overlay-inner">
+          <div class="sigil spin">✦</div>
+          <p class="blurb">Lighting the torches…</p>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
