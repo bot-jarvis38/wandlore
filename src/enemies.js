@@ -10,6 +10,15 @@ import { buildMaterials } from './textures.js'
 
 let nextId = 1
 
+/** How long each comedy status holds it, in seconds. */
+const STATUS_TIME = {
+  dance: 3.4,
+  levitate: 3.0,
+  trip: 2.6,
+  laugh: 3.2,
+  freeze: 2.8,
+}
+
 class Enemy {
   constructor(scene, z, lane) {
     this.id = nextId++
@@ -20,7 +29,77 @@ class Enemy {
     this.hurt = 0
     this.burning = 0
     this.stagger = new THREE.Vector3()
+    /** Active comedy status: { kind, time, t } or null. */
+    this.status = null
     scene.add(this.group)
+  }
+
+  /**
+   * Apply a spell's `effect`. Two shapes here: shrink and grow are permanent
+   * resizes it keeps walking under, everything else is a timed indignity that
+   * stops it where it stands.
+   */
+  applyEffect(kind) {
+    if (kind === 'shrink') {
+      this.group.scale.setScalar(0.4)
+      this.center *= 0.4
+      this.radius *= 0.5
+      this.damage = Math.max(2, Math.round(this.damage * 0.35))
+      return
+    }
+    if (kind === 'grow') {
+      this.group.scale.setScalar(1.85)
+      this.center *= 1.85
+      this.radius *= 1.7
+      this.speed *= 0.42
+      return
+    }
+    this.status = { kind, time: STATUS_TIME[kind] ?? 2.4, t: 0 }
+  }
+
+  /**
+   * Run the active status. Returns false while one is running, which is every
+   * subclass's cue to skip its own movement for the frame — a levitating suit
+   * of armour that keeps walking is just a bug with a funny name.
+   */
+  statusTick(dt, t) {
+    const s = this.status
+    if (!s) return true
+    s.time -= dt
+    s.t += dt
+    const g = this.group
+
+    switch (s.kind) {
+      case 'dance':
+        g.position.x += Math.sin(s.t * 21) * 2.4 * dt
+        g.position.y = Math.abs(Math.sin(s.t * 13)) * 0.55
+        g.rotation.z = Math.sin(s.t * 17) * 0.5
+        break
+      case 'levitate':
+        g.position.y += (3.4 - g.position.y) * Math.min(1, dt * 3.2)
+        g.rotation.z = Math.sin(s.t * 3.1) * 0.8
+        g.rotation.y += dt * 1.7
+        break
+      case 'trip':
+        g.rotation.x += (-Math.PI / 2.1 - g.rotation.x) * Math.min(1, dt * 7)
+        g.position.z += 1.1 * dt // still sliding, on its face
+        break
+      case 'laugh':
+        g.rotation.x = Math.sin(s.t * 15) * 0.38
+        g.position.x += Math.sin(s.t * 8.5) * 0.9 * dt
+        g.position.y = Math.abs(Math.sin(s.t * 7)) * 0.22
+        break
+      case 'freeze':
+      default:
+        break
+    }
+
+    if (s.time <= 0) {
+      this.status = null
+      g.rotation.x = 0
+      g.rotation.z = 0
+    }
+    return false
   }
 
   hitPoint(target = new THREE.Vector3()) {
@@ -105,6 +184,8 @@ export class Dementor extends Enemy {
   }
 
   update(dt, t, playerZ) {
+    // A status holds it in place and, while it holds, it cannot reach you.
+    if (!this.statusTick(dt, t)) return false
     const wobble = Math.sin(t * 1.4 + this.phase)
     this.group.position.z += this.speed * dt
     this.group.position.x += Math.sin(t * 0.7 + this.phase) * 0.4 * dt
@@ -197,6 +278,7 @@ export class Armour extends Enemy {
   }
 
   update(dt, t, playerZ) {
+    if (!this.statusTick(dt, t)) return false
     this.group.position.z += this.speed * dt
     const stride = t * 7 + this.phase
     this.group.position.y = Math.abs(Math.sin(stride)) * 0.09
@@ -284,6 +366,7 @@ export class Pixie extends Enemy {
   }
 
   update(dt, t, playerZ) {
+    if (!this.statusTick(dt, t)) return false
     this.group.position.z += this.speed * dt
     this.group.position.x += Math.sin(t * 3.1 + this.phase) * 2.4 * dt
     this.group.position.y = 1.7 + Math.sin(t * 4.2 + this.phase) * 0.55

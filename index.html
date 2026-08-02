@@ -34,18 +34,34 @@
           </div>
         </div>
 
-        <div id="incantation" class="incantation">
-          <div class="cue">SPEAK THE INCANTATION</div>
-          <div id="spell-word" class="word">EXPELLIARMUS</div>
-          <div class="cast-meter"><div id="cast-fill" class="cast-fill"></div></div>
-          <div id="heard" class="heard"></div>
-        </div>
+        <!-- what the spell just did, flashed over the corridor and gone -->
+        <div id="reaction" class="reaction"></div>
 
-        <div class="hud-bottom">
-          <div id="mic-state" class="mic-state">
-            <span class="mic-dot"></span><span id="mic-text">LISTENING</span>
+        <!--
+          The incantation lives at the FOOT of the screen, not the middle. The
+          first build centred it: a 460px card with 44px type sat directly over
+          the corridor and the enemies walking down it, which is the one thing
+          a first-person game cannot afford to cover.
+        -->
+        <div class="hud-foot">
+          <div id="incantation" class="incantation">
+            <div class="incantation-row">
+              <div id="spell-word" class="word">EXPELLIARMUS</div>
+              <div id="match-pct" class="match-pct">0%</div>
+            </div>
+            <div class="cast-meter"><div id="cast-fill" class="cast-fill"></div></div>
+            <div class="listen">
+              <div class="match"><div id="match-fill" class="match-fill"></div></div>
+              <div id="heard" class="heard">say it — the word lights up as it lands</div>
+            </div>
           </div>
-          <button id="cast-button" class="cast-button hidden">TAP TO CAST</button>
+
+          <div class="hud-bottom">
+            <div id="mic-state" class="mic-state">
+              <span class="mic-dot"></span><span id="mic-text">LISTENING</span>
+            </div>
+            <button id="cast-button" class="cast-button hidden">TAP TO CAST</button>
+          </div>
         </div>
 
         <div id="damage-flash" class="damage-flash"></div>

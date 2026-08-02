@@ -133,25 +133,56 @@ body {
   text-shadow: 0 0 18px rgba(242, 214, 138, 0.45), 0 2px 4px #000;
 }
 
-/* the incantation card — the actual trigger of the game */
-.incantation {
-  align-self: center;
+/*
+ * The reaction line — what the spell actually did. Absolutely positioned so it
+ * never participates in the HUD's layout, sitting in the upper third where
+ * there is nothing to cover.
+ */
+.reaction {
+  position: absolute;
+  left: 50%;
+  top: 26%;
+  transform: translate(-50%, 0) scale(0.96);
+  width: min(84%, 420px);
   text-align: center;
-  width: min(92%, 460px);
-  padding: 14px 18px 16px;
-  border: 1px solid rgba(201, 164, 76, 0.35);
+  font-family: 'Cormorant Garamond', serif;
+  font-style: italic;
+  font-size: clamp(15px, 4.4vw, 21px);
+  line-height: 1.25;
+  color: #ffeec4;
+  text-shadow: 0 0 24px rgba(255, 180, 90, 0.55), 0 2px 8px #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.4s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.reaction.show {
+  opacity: 1;
+  transform: translate(-50%, -10px) scale(1);
+}
+
+/* everything that has to stay out of the corridor's way */
+.hud-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* the incantation strip — the actual trigger of the game */
+.incantation {
+  width: 100%;
+  padding: 9px 12px 10px;
+  border: 1px solid rgba(201, 164, 76, 0.3);
   border-radius: 3px;
-  background: linear-gradient(180deg, rgba(18, 14, 26, 0.82), rgba(8, 6, 14, 0.9));
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.7), inset 0 0 40px rgba(201, 164, 76, 0.07);
+  background: linear-gradient(180deg, rgba(14, 11, 21, 0.62), rgba(6, 5, 11, 0.82));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55), inset 0 0 26px rgba(201, 164, 76, 0.05);
   backdrop-filter: blur(3px);
-  transform: translateY(-6px);
-  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
 .incantation.success {
   border-color: rgba(127, 216, 255, 0.85);
-  box-shadow: 0 0 60px rgba(127, 216, 255, 0.35), inset 0 0 50px rgba(127, 216, 255, 0.16);
-  transform: translateY(-6px) scale(1.03);
+  box-shadow: 0 0 42px rgba(127, 216, 255, 0.3), inset 0 0 34px rgba(127, 216, 255, 0.14);
 }
 
 .incantation.fail {
@@ -160,34 +191,69 @@ body {
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateY(-6px) translateX(0); }
-  20% { transform: translateY(-6px) translateX(-8px); }
-  45% { transform: translateY(-6px) translateX(7px); }
-  70% { transform: translateY(-6px) translateX(-4px); }
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  45% { transform: translateX(6px); }
+  70% { transform: translateX(-3px); }
 }
 
-.cue {
-  font-family: 'Cinzel', serif;
-  font-size: 9px;
-  letter-spacing: 0.34em;
-  color: rgba(201, 164, 76, 0.75);
+.incantation-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
+/*
+ * Sized to fit the longest incantation in the game on the narrowest phone
+ * without wrapping into the play area: WINGARDIUM LEVIOSA at 19 characters.
+ * `cqi`-free on purpose — a plain vw clamp is enough and works everywhere.
+ */
 .word {
   font-family: 'Cinzel', serif;
   font-weight: 700;
-  font-size: clamp(26px, 8.2vw, 44px);
-  letter-spacing: 0.06em;
-  margin: 6px 0 10px;
+  font-size: clamp(15px, 5.1vw, 26px);
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  color: rgba(255, 246, 223, 0.34);
+  text-shadow: 0 2px 5px #000;
+}
+
+/*
+ * Per-letter lighting is the answer to "I have no idea if what I said was
+ * right". Letters go gold left-to-right in proportion to the live match score
+ * — the same score that decides whether the spell fires, so what you see is
+ * what the game is actually using.
+ */
+.word .lit {
   color: #fff6df;
   text-shadow:
-    0 0 22px rgba(242, 214, 138, 0.55),
-    0 0 60px rgba(255, 138, 61, 0.28),
-    0 3px 6px #000;
+    0 0 18px rgba(242, 214, 138, 0.7),
+    0 0 46px rgba(255, 138, 61, 0.32),
+    0 2px 5px #000;
 }
+
+.word .sp {
+  display: inline-block;
+  width: 0.34em;
+}
+
+.match-pct {
+  font-family: 'Cinzel', serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: rgba(232, 220, 192, 0.45);
+  flex: 0 0 auto;
+  transition: color 0.12s linear;
+}
+
+.match-pct.near { color: #ffc23d; }
+.match-pct.hit { color: #7fd8ff; }
 
 .cast-meter {
   height: 3px;
+  margin-top: 7px;
   background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
 }
@@ -200,14 +266,56 @@ body {
   box-shadow: 0 0 10px rgba(242, 214, 138, 0.7);
 }
 
-.heard {
+.listen {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   margin-top: 7px;
+}
+
+/* live match strength — the bar that moves while you are still talking */
+.match {
+  flex: 0 0 34%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.match-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: #b4443a;
+  box-shadow: 0 0 10px rgba(180, 68, 58, 0.6);
+  transition: width 0.09s linear, background 0.12s linear;
+}
+
+.match-fill.near {
+  background: var(--gold-bright);
+  box-shadow: 0 0 12px rgba(242, 214, 138, 0.8);
+}
+
+.match-fill.hit {
+  background: #7fd8ff;
+  box-shadow: 0 0 16px rgba(127, 216, 255, 0.9);
+}
+
+/* what the microphone actually heard, verbatim — no guessing */
+.heard {
+  flex: 1 1 auto;
   min-height: 15px;
   font-style: italic;
-  font-size: 13px;
-  letter-spacing: 0.04em;
+  font-size: 12px;
+  letter-spacing: 0.03em;
   color: rgba(232, 220, 192, 0.5);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+
+.heard.miss { color: rgba(255, 138, 120, 0.85); }
+.heard.hit { color: rgba(127, 216, 255, 0.95); }
 
 .hud-bottom {
   display: flex;

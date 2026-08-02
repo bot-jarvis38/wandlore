@@ -22,6 +22,19 @@ const STATES = [
     name: 'intense',
     query: '?state=play&populate=Dementor,Armour,Pixie,Dementor,Pixie,Armour,Pixie',
   },
+  // mid-utterance: the long incantation half-said, which is the state the
+  // whole voice mechanic lives or dies on and the one a still cannot fake
+  {
+    name: 'speaking',
+    query:
+      '?state=play&populate=Armour,Dementor,Pixie' +
+      '&spell=WINGARDIUM%20LEVIOSA&say=wingardium',
+  },
+  // the comedy statuses, so a capture proves they render rather than assert it
+  {
+    name: 'levitating',
+    query: '?state=play&populate=Armour,Dementor&effect=levitate',
+  },
   { name: 'interlude', query: '?state=interlude' },
   { name: 'gameover', query: '?state=gameover' },
 ]

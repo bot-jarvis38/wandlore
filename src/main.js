@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 
 import './style.css'
 import { buildWorld, CORRIDOR } from './world.js'
-import { SPELLS, Wand, Particles, Projectiles } from './spells.js'
+import { SPELLS, spellsForFloor, Wand, Particles, Projectiles } from './spells.js'
 import { Dementor, Armour, Pixie } from './enemies.js'
 import { VoiceListener, scoreUtterance, speechSupported, MATCH_THRESHOLD } from './voice.js'
 
@@ -31,6 +31,9 @@ const ui = {
   incantation: $('incantation'),
   castFill: $('cast-fill'),
   heard: $('heard'),
+  matchFill: $('match-fill'),
+  matchPct: $('match-pct'),
+  reaction: $('reaction'),
   health: $('health-fill'),
   score: $('score'),
   waveLabel: $('wave-label'),
@@ -42,13 +45,44 @@ const ui = {
 
 /* ── waves ─────────────────────────────────────────────────────────── */
 
-const WAVES = [
+/**
+ * Floors, not "waves" — and the castle does not run out of them. The first
+ * build shipped five hand-written waves and ended, which read as a demo rather
+ * than a game. These twelve are authored; past twelve the generator keeps
+ * going and the counts keep climbing, so a run ends when you do.
+ */
+const FLOORS = [
   { name: 'THE GRAND STAIRCASE', pattern: [['Dementor', 2], ['Pixie', 3]], gap: 2.2 },
-  { name: 'THE CHARMS CORRIDOR', pattern: [['Pixie', 5], ['Armour', 2]], gap: 1.9 },
-  { name: 'THE TROPHY ROOM', pattern: [['Armour', 3], ['Dementor', 3]], gap: 1.7 },
-  { name: 'THE ASTRONOMY STAIR', pattern: [['Pixie', 6], ['Dementor', 4], ['Armour', 3]], gap: 1.45 },
-  { name: 'THE FORBIDDEN FLOOR', pattern: [['Dementor', 6], ['Armour', 5], ['Pixie', 6]], gap: 1.2 },
+  { name: 'THE CHARMS CORRIDOR', pattern: [['Pixie', 5], ['Armour', 2]], gap: 1.95 },
+  { name: 'THE TROPHY ROOM', pattern: [['Armour', 3], ['Dementor', 3]], gap: 1.8 },
+  { name: 'THE ASTRONOMY STAIR', pattern: [['Pixie', 6], ['Dementor', 4], ['Armour', 2]], gap: 1.7 },
+  { name: 'THE VIADUCT', pattern: [['Armour', 5], ['Pixie', 5]], gap: 1.6 },
+  { name: 'THE CLOCK TOWER', pattern: [['Dementor', 6], ['Armour', 4]], gap: 1.52 },
+  { name: 'THE DUNGEON STAIR', pattern: [['Pixie', 9], ['Dementor', 4]], gap: 1.44 },
+  { name: 'THE GREENHOUSES', pattern: [['Armour', 6], ['Pixie', 7], ['Dementor', 3]], gap: 1.36 },
+  { name: 'THE OWLERY', pattern: [['Pixie', 12], ['Armour', 4]], gap: 1.28 },
+  { name: 'THE ROOM OF REQUIREMENT', pattern: [['Dementor', 8], ['Armour', 6]], gap: 1.2 },
+  { name: 'THE FORBIDDEN FLOOR', pattern: [['Dementor', 7], ['Armour', 7], ['Pixie', 8]], gap: 1.12 },
+  { name: 'THE HEADMASTER’S STAIR', pattern: [['Armour', 9], ['Dementor', 9], ['Pixie', 9]], gap: 1.04 },
 ]
+
+/** Floor 13 and beyond: authored floors run out, the castle does not. */
+function floorSpec(index) {
+  if (index < FLOORS.length) return FLOORS[index]
+  const over = index - FLOORS.length + 1
+  const last = FLOORS[FLOORS.length - 1]
+  return {
+    name: `THE ${ordinal(index + 1)} FLOOR`,
+    pattern: last.pattern.map(([kind, n]) => [kind, Math.round(n * (1 + over * 0.22))]),
+    gap: Math.max(0.55, last.gap - over * 0.05),
+  }
+}
+
+function ordinal(n) {
+  const s = ['TH', 'ST', 'ND', 'RD']
+  const v = n % 100
+  return n + (s[(v - 20) % 10] || s[v] || s[0])
+}
 
 const KINDS = { Dementor, Armour, Pixie }
 
@@ -247,17 +281,16 @@ class Game {
     this.waveIndex = 0
     this.spawnQueue = []
     this.spawnTimer = 0
-    this.currentWave = WAVES[0]
+    this.currentWave = floorSpec(0)
     this.updateHud()
   }
 
   startWave(index) {
-    const wave = WAVES[Math.min(index, WAVES.length - 1)]
-    const scale = 1 + Math.max(0, index - WAVES.length + 1) * 0.4
+    const wave = floorSpec(index)
     this.currentWave = wave
     this.spawnQueue = []
     for (const [kind, count] of wave.pattern) {
-      for (let i = 0; i < Math.round(count * scale); i++) this.spawnQueue.push(kind)
+      for (let i = 0; i < count; i++) this.spawnQueue.push(kind)
     }
     for (let i = this.spawnQueue.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
@@ -276,28 +309,98 @@ class Game {
   }
 
   nextSpell() {
-    const pool = SPELLS.filter(s => s !== this.spell)
-    this.spell = pool[Math.floor(Math.random() * pool.length)]
-    this.castWindow = Math.max(2.6, 5.4 - this.waveIndex * 0.35)
+    // Draw from the floor's pool, never the same word twice running, and
+    // never the same word two draws apart either — with 21 spells in the bag
+    // a plain random pick still felt repetitive because the eye notices a
+    // repeat long before the statistics justify one.
+    const pool = spellsForFloor(this.waveIndex + 1).filter(s => !this.recentSpells?.includes(s))
+    const bag = pool.length ? pool : spellsForFloor(this.waveIndex + 1)
+    this.spell = bag[Math.floor(Math.random() * bag.length)]
+    this.recentSpells = [this.spell, ...(this.recentSpells ?? [])].slice(0, 3)
+
+    // Longer words get more time. A 2.6s window on WINGARDIUM LEVIOSA is not
+    // difficulty, it is an impossible ask.
+    const syllables = Math.max(3, this.spell.word.replace(/[^AEIOUY]/g, '').length)
+    this.castWindow = Math.max(3.0, 3.4 + syllables * 0.42 - this.waveIndex * 0.18)
     this.castLeft = this.castWindow
-    ui.word.textContent = this.spell.word
+
+    this.bestHeard = 0
+    this.casting = false
+    this.renderWord(0)
+    this.showMatch(0)
     ui.incantation.classList.remove('success', 'fail')
     ui.heard.textContent = ''
+    ui.heard.className = 'heard'
+  }
+
+  /**
+   * The word as individual letters, the first `progress` share of them lit.
+   * Spaces get their own element so a two-word incantation still breaks in the
+   * right place while every letter stays individually addressable.
+   */
+  renderWord(progress) {
+    const word = this.spell.word
+    const letters = [...word].filter(c => c !== ' ')
+    const litCount = Math.round(progress * letters.length)
+    let seen = 0
+    ui.word.innerHTML = ''
+    for (const ch of word) {
+      const span = document.createElement('span')
+      if (ch === ' ') {
+        span.className = 'sp'
+      } else {
+        span.textContent = ch
+        if (seen < litCount) span.className = 'lit'
+        seen++
+      }
+      ui.word.appendChild(span)
+    }
+  }
+
+  /** The live match bar and percentage — the same number that fires the spell. */
+  showMatch(score) {
+    const pct = Math.round(score * 100)
+    const band = score >= MATCH_THRESHOLD ? 'hit' : score >= 0.42 ? 'near' : ''
+    ui.matchFill.style.width = `${pct}%`
+    ui.matchFill.className = `match-fill ${band}`
+    ui.matchPct.textContent = `${pct}%`
+    ui.matchPct.className = `match-pct ${band}`
+  }
+
+  /** One line of what the spell just did, over the corridor and gone. */
+  flashReaction(text) {
+    ui.reaction.textContent = text
+    ui.reaction.classList.add('show')
+    clearTimeout(this._reactionTimer)
+    this._reactionTimer = setTimeout(() => ui.reaction.classList.remove('show'), 1500)
   }
 
   /* ── casting ─────────────────────────────────────────────────────── */
 
   onHeard(transcript, isFinal) {
     if (this.state !== 'playing' || !this.spell) return
+    const said = transcript.trim()
     const score = scoreUtterance(transcript, this.spell)
-    ui.heard.textContent = `“${transcript.trim()}”`
+
+    // Interim results arrive out of order across alternatives, so the display
+    // tracks the best score seen for this word rather than the latest one —
+    // otherwise the bar lurches backwards while you are still speaking.
+    this.bestHeard = Math.max(this.bestHeard ?? 0, score)
+    this.renderWord(this.bestHeard)
+    this.showMatch(this.bestHeard)
+    if (said) ui.heard.textContent = `“${said}”`
+
     if (score >= MATCH_THRESHOLD) {
+      ui.heard.className = 'heard hit'
       this.castCurrent('voice')
-    } else if (isFinal && transcript.trim().length > 2) {
+    } else if (isFinal && said.length > 2) {
       this.attempts++
+      ui.heard.className = 'heard miss'
+      ui.heard.textContent = `heard “${said}” — ${Math.round(score * 100)}%`
       ui.incantation.classList.add('fail')
       setTimeout(() => ui.incantation.classList.remove('fail'), 340)
       this.sfx.fizzle()
+      if (score >= 0.42) this.flashReaction('Close. The castle is unmoved.')
     }
   }
 
@@ -305,8 +408,13 @@ class Game {
     if (this.state !== 'playing' || !this.spell) return
     // With a working mic the spoken word is the only trigger — otherwise the
     // tap button quietly becomes the better way to play and the game stops
-    // being a voice game.
+    // being a voice game. Checked BEFORE the lock below: taking the lock and
+    // then bailing here would leave casting stuck on and deafen the game.
     if ((source === 'tap' || source === 'key') && !this.silentMode) return
+    // The lit word is held for a beat before the next one is drawn; without a
+    // lock, a second interim result inside that beat fires the same spell twice.
+    if (this.casting) return
+    this.casting = true
 
     const spell = this.spell
     this.attempts++
@@ -328,8 +436,17 @@ class Game {
     this.sfx.cast()
 
     ui.incantation.classList.add('success')
+    this.renderWord(1)
+    this.showMatch(1)
     setTimeout(() => ui.incantation.classList.remove('success'), 240)
-    this.nextSpell()
+
+    // Held one frame so the fully-lit word is visible before it is replaced —
+    // without this the payoff for finally saying WINGARDIUM LEVIOSA correctly
+    // was the word vanishing.
+    clearTimeout(this._nextSpellTimer)
+    this._nextSpellTimer = setTimeout(() => {
+      if (this.state === 'playing') this.nextSpell()
+    }, 260)
   }
 
   onSpellHit(spell, enemy, at) {
@@ -338,6 +455,14 @@ class Game {
     this.trauma = Math.min(1, this.trauma + 0.16)
 
     const killed = enemy.takeDamage(spell.damage)
+
+    // The funny part. A spell that only subtracts a number is a number; these
+    // do something to the thing in front of you and say so.
+    if (spell.effect && !killed) {
+      enemy.applyEffect(spell.effect)
+      this.particles.burst(at, spell.glow, 22, 3.2, 0.9)
+    }
+    if (spell.reaction) this.flashReaction(spell.reaction)
 
     if (spell.radius > 0) {
       for (const other of this.enemies) {
@@ -434,10 +559,12 @@ class Game {
     $('tally-accuracy').textContent = `${accuracy}%`
     $('tally-best').textContent = this.bestStreak
     ui.interludeTitle.textContent =
-      this.waveIndex >= WAVES.length ? 'STILL STANDING' : 'THE CORRIDOR FALLS SILENT'
-    ui.interludeNext.textContent = `Next: ${WAVES[
-      Math.min(this.waveIndex, WAVES.length - 1)
-    ].name.toLowerCase()}.`
+      this.waveIndex >= FLOORS.length ? 'STILL STANDING' : 'THE CORRIDOR FALLS SILENT'
+    const next = floorSpec(this.waveIndex)
+    const harder = this.waveIndex === 1 || this.waveIndex === 3
+    ui.interludeNext.textContent = harder
+      ? `Next: ${next.name.toLowerCase()} — and longer words.`
+      : `Next: ${next.name.toLowerCase()}.`
     this.show('interlude')
   }
 
@@ -501,14 +628,17 @@ class Game {
       }
     }
 
-    this.castLeft -= dt
-    ui.castFill.style.transform = `scaleX(${Math.max(0, this.castLeft / this.castWindow)})`
-    if (this.castLeft <= 0) {
-      this.streak = 0
-      this.sfx.fizzle()
-      ui.incantation.classList.add('fail')
-      setTimeout(() => ui.incantation.classList.remove('fail'), 340)
-      this.nextSpell()
+    if (!this.casting) {
+      this.castLeft -= dt
+      ui.castFill.style.transform = `scaleX(${Math.max(0, this.castLeft / this.castWindow)})`
+      if (this.castLeft <= 0) {
+        this.streak = 0
+        this.sfx.fizzle()
+        ui.incantation.classList.add('fail')
+        setTimeout(() => ui.incantation.classList.remove('fail'), 340)
+        this.flashReaction('The word died in your throat.')
+        this.nextSpell()
+      }
     }
 
     this.projectiles.update(dt, this.enemies, (spell, enemy, at) =>
@@ -539,6 +669,9 @@ class Game {
 /* ── boot ──────────────────────────────────────────────────────────── */
 
 const game = new Game()
+// Exposed so tools/probe-cast.mjs can drive a spoken utterance headlessly —
+// a cast cycle is otherwise only reachable by speaking into a real phone.
+window.__game = game
 game.frame()
 
 $('start-button').addEventListener('click', () => game.begin(true))
@@ -579,6 +712,27 @@ function applyDebugState() {
     })
     game.spawnQueue = []
   }
+
+  // ?spell=WORD pins the incantation and ?say=text feeds the recogniser, so a
+  // headless capture can photograph the mid-utterance state that is otherwise
+  // only reachable by speaking into a phone.
+  const forced = params.get('spell')
+  if (forced) {
+    const match = SPELLS.find(s => s.word === forced.toUpperCase())
+    if (match) {
+      game.spell = match
+      game.bestHeard = 0
+      game.casting = false
+      game.castWindow = 6
+      game.castLeft = 6
+      game.renderWord(0)
+      game.showMatch(0)
+    }
+  }
+  const said = params.get('say')
+  if (said) game.onHeard(said, false)
+  const effect = params.get('effect')
+  if (effect) game.enemies.forEach(e => e.applyEffect(effect))
 
   if (DEBUG_STATE === 'interlude') {
     game.score = 4820

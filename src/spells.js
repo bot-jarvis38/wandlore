@@ -7,31 +7,33 @@ import { radialSprite } from './textures.js'
  * the trigger, so the payoff for saying it has to be loud.
  */
 
+/**
+ * `tier` is how hard the word is to say, not how strong the spell is — 1 is a
+ * word you can bark, 3 is a mouthful you will fumble the first three times.
+ * The game ramps tiers with the floor, so the difficulty curve is your tongue.
+ *
+ * `effect` is the funny one. A spell that only subtracts a number is a number;
+ * these do something visible and stupid to the thing in front of you, and
+ * `reaction` is the line that flashes when it lands.
+ */
 export const SPELLS = [
+  /* ── tier 1: short, barkable ─────────────────────────────────────── */
   {
     word: 'STUPEFY',
-    spoken: ['stupefy', 'stupify', 'stupefied', 'stupefy it', 'stupa fy', 'stew pify'],
+    tier: 1,
+    spoken: ['stupefy', 'stupify', 'stupefied', 'stupa fy', 'stew pify', 'to pacify'],
     color: 0xff3b30,
     glow: 0xff8a6a,
     damage: 34,
     speed: 46,
     radius: 0,
     note: 'a red bolt, straight to the chest',
-  },
-  {
-    word: 'EXPELLIARMUS',
-    spoken: ['expelliarmus', 'expeliarmus', 'expelly armus', 'expel he armus', 'a spell he armas'],
-    color: 0xffc23d,
-    glow: 0xffe6a0,
-    damage: 26,
-    speed: 54,
-    radius: 2.4,
-    knockback: 7,
-    note: 'disarms, and throws them back',
+    reaction: 'It drops like a sack of bricks.',
   },
   {
     word: 'INCENDIO',
-    spoken: ['incendio', 'in cendio', 'insendio', 'in send io', 'incendia'],
+    tier: 1,
+    spoken: ['incendio', 'in cendio', 'insendio', 'in send io', 'incendia', 'in san diego'],
     color: 0xff6a1a,
     glow: 0xffb066,
     damage: 22,
@@ -39,20 +41,24 @@ export const SPELLS = [
     radius: 3.4,
     burn: true,
     note: 'a gout of flame that keeps burning',
+    reaction: 'Something back there is on fire now.',
   },
   {
     word: 'BOMBARDA',
-    spoken: ['bombarda', 'bombardo', 'bomb arda', 'bombarder', 'bum barda'],
+    tier: 1,
+    spoken: ['bombarda', 'bombardo', 'bomb arda', 'bombarder', 'bum barda', 'bomb barda'],
     color: 0xbfe8ff,
     glow: 0xffffff,
     damage: 48,
     speed: 30,
     radius: 4.6,
     note: 'blast radius, so aim into the crowd',
+    reaction: 'The corridor rearranges itself.',
   },
   {
     word: 'REDUCTO',
-    spoken: ['reducto', 'reductor', 'reduce toe', 'reduct o', 'ridotto'],
+    tier: 1,
+    spoken: ['reducto', 'reductor', 'reduce toe', 'reduct o', 'ridotto', 'red duct o'],
     color: 0xc07bff,
     glow: 0xe4c4ff,
     damage: 40,
@@ -60,18 +66,269 @@ export const SPELLS = [
     radius: 0,
     pierce: true,
     note: 'punches through everything in the lane',
+    reaction: 'Straight through. And through the next one.',
+  },
+  {
+    word: 'DIFFINDO',
+    tier: 1,
+    spoken: ['diffindo', 'difindo', 'diff indo', 'defiendo', 'the fiendo'],
+    color: 0x9ef0d0,
+    glow: 0xdffff2,
+    damage: 30,
+    speed: 58,
+    radius: 0,
+    note: 'a clean severing charm',
+    reaction: 'Cut neatly in half. Both halves look annoyed.',
+  },
+  {
+    word: 'CONFRINGO',
+    tier: 1,
+    spoken: ['confringo', 'con fringo', 'confringe o', 'kon fringo', 'con flamingo'],
+    color: 0xffa23d,
+    glow: 0xffe0b0,
+    damage: 38,
+    speed: 40,
+    radius: 3.8,
+    note: 'the blasting curse',
+    reaction: 'Everything nearby is briefly airborne.',
+  },
+  {
+    word: 'REDUCIO',
+    tier: 1,
+    spoken: ['reducio', 'reduce io', 'reduce e o', 'redusio', 'radicchio'],
+    color: 0x7fd8ff,
+    glow: 0xd9f4ff,
+    damage: 10,
+    speed: 52,
+    radius: 0,
+    effect: 'shrink',
+    note: 'shrinks it to something you can step on',
+    reaction: 'It is now the size of a teapot and furious about it.',
+  },
+
+  /* ── tier 2: the ones you have to slow down for ──────────────────── */
+  {
+    word: 'EXPELLIARMUS',
+    tier: 2,
+    spoken: [
+      'expelliarmus', 'expeliarmus', 'expelly armus', 'expel he armus',
+      'a spell he armas', 'expel yarmouth', 'expel the armors',
+    ],
+    color: 0xffc23d,
+    glow: 0xffe6a0,
+    damage: 26,
+    speed: 54,
+    radius: 2.4,
+    knockback: 7,
+    note: 'disarms, and throws them back',
+    reaction: 'Disarmed, and sent back down the corridor.',
+  },
+  {
+    word: 'IMPEDIMENTA',
+    tier: 2,
+    spoken: ['impedimenta', 'impediment a', 'impediment', 'impede a menta', 'in pedimenta'],
+    color: 0x8fd0ff,
+    glow: 0xdbefff,
+    damage: 16,
+    speed: 50,
+    radius: 3.0,
+    effect: 'freeze',
+    note: 'stops it dead where it stands',
+    reaction: 'Frozen mid-stride, one foot still up.',
+  },
+  {
+    word: 'LEVICORPUS',
+    tier: 2,
+    spoken: ['levicorpus', 'levi corpus', 'levy corpus', 'levi corpse', 'heavy corpus'],
+    color: 0xc9f0ff,
+    glow: 0xffffff,
+    damage: 14,
+    speed: 48,
+    radius: 0,
+    effect: 'levitate',
+    note: 'hoists it into the air by the ankle',
+    reaction: 'Hanging upside down by one ankle, flailing.',
+  },
+  {
+    word: 'RICTUSEMPRA',
+    tier: 2,
+    spoken: ['rictusempra', 'rictus empra', 'rictus sempra', 'rick to sempra', 'ricky sempra'],
+    color: 0xffe27a,
+    glow: 0xfff6d0,
+    damage: 12,
+    speed: 56,
+    radius: 0,
+    effect: 'laugh',
+    note: 'the tickling charm',
+    reaction: 'It doubles over laughing. It cannot advance while laughing.',
+  },
+  {
+    word: 'ENGORGIO',
+    tier: 2,
+    spoken: ['engorgio', 'en gorgio', 'in gorgio', 'and gorgio', 'in georgia'],
+    color: 0xff8fd0,
+    glow: 0xffd6ee,
+    damage: 18,
+    speed: 44,
+    radius: 0,
+    effect: 'grow',
+    note: 'inflates it until it is a liability',
+    reaction: 'Now enormous, slow, and extremely easy to hit.',
+  },
+  {
+    word: 'FURNUNCULUS',
+    tier: 2,
+    spoken: ['furnunculus', 'fur nunculus', 'furuncle us', 'fernunculus', 'for uncle us'],
+    color: 0x9fe07a,
+    glow: 0xdcf7c4,
+    damage: 28,
+    speed: 46,
+    radius: 2.2,
+    note: 'covers it in boils',
+    reaction: 'Boils. Everywhere. It has stopped caring about you.',
   },
   {
     word: 'EXPECTO PATRONUM',
-    spoken: ['expecto patronum', 'expecto patronium', 'expect o patronum', 'expecto patron'],
+    tier: 2,
+    spoken: [
+      'expecto patronum', 'expecto patronium', 'expect o patronum',
+      'expecto patron', 'expect a patronum', 'espresso patronum',
+    ],
     color: 0xdff4ff,
     glow: 0xffffff,
     damage: 30,
     speed: 26,
     radius: 7.5,
     note: 'a stag of light — clears the corridor',
+    reaction: 'A stag of light goes through the lot of them.',
+  },
+
+  /* ── tier 3: tongue-twisters ─────────────────────────────────────── */
+  {
+    word: 'TARANTALLEGRA',
+    tier: 3,
+    spoken: [
+      'tarantallegra', 'tarantella gra', 'tarantula legra', 'tarantallegro',
+      'tarantella allegra', 'tarantula allegra',
+    ],
+    color: 0xff6ad5,
+    glow: 0xffd4f2,
+    damage: 14,
+    speed: 50,
+    radius: 2.6,
+    effect: 'dance',
+    note: 'makes its legs dance without permission',
+    reaction: 'Its legs have started dancing. The rest of it disapproves.',
+  },
+  {
+    word: 'PETRIFICUS TOTALUS',
+    tier: 3,
+    spoken: [
+      'petrificus totalus', 'petrificus totalis', 'petrify us totalus',
+      'pacificus totalus', 'petrificus total us', 'terrific is totalus',
+    ],
+    color: 0xa8b8d8,
+    glow: 0xe6eeff,
+    damage: 26,
+    speed: 44,
+    radius: 0,
+    effect: 'freeze',
+    note: 'full body-bind',
+    reaction: 'Rigid as a plank. Falls over like one too.',
+  },
+  {
+    word: 'LOCOMOTOR MORTIS',
+    tier: 3,
+    spoken: [
+      'locomotor mortis', 'loco motor mortis', 'locomotive mortis',
+      'locomotor morris', 'loco motor mortise',
+    ],
+    color: 0x7ad4ff,
+    glow: 0xd6f2ff,
+    damage: 20,
+    speed: 52,
+    radius: 0,
+    effect: 'trip',
+    note: 'locks the legs together',
+    reaction: 'Legs glued shut. It topples like a felled tree.',
+  },
+  {
+    word: 'WINGARDIUM LEVIOSA',
+    tier: 3,
+    spoken: [
+      'wingardium leviosa', 'wingardium leviosar', 'win gardium leviosa',
+      'wing hard him leviosa', 'wingardium levio sa', 'wing garden leviosa',
+    ],
+    color: 0xdfe8ff,
+    glow: 0xffffff,
+    damage: 12,
+    speed: 40,
+    radius: 2.0,
+    effect: 'levitate',
+    note: "it's leviOsa, not levioSA",
+    reaction: 'Up it goes, slowly, looking betrayed.',
+  },
+  {
+    word: 'SLUGULUS ERUCTO',
+    tier: 3,
+    spoken: [
+      'slugulus eructo', 'sluggulus eructo', 'slug u lus eructo',
+      'slugulus erupto', 'slug list eructo', 'sluggish eructo',
+    ],
+    color: 0x8fd67a,
+    glow: 0xd8f5c8,
+    damage: 24,
+    speed: 38,
+    radius: 0,
+    effect: 'laugh',
+    note: 'the slug-vomiting charm, regrettably',
+    reaction: 'It is now producing slugs. Steadily. It has given up on you.',
+  },
+  {
+    word: 'ANTEOCULATIA',
+    tier: 3,
+    spoken: [
+      'anteoculatia', 'ante oculatia', 'anti oculatia', 'anteo culatia',
+      'auntie oculatia', 'ante ocular tia',
+    ],
+    color: 0xc8a2ff,
+    glow: 0xeadcff,
+    damage: 22,
+    speed: 46,
+    radius: 0,
+    effect: 'grow',
+    note: 'grows antlers on it',
+    reaction: 'It has antlers now. It keeps catching them on the walls.',
+  },
+  {
+    word: 'OPPUGNO MAXIMA',
+    tier: 3,
+    spoken: [
+      'oppugno maxima', 'oppugno maximus', 'opugno maxima', 'oh pugno maxima',
+      'a pug no maxima', 'oppugno maximum',
+    ],
+    color: 0xffd27a,
+    glow: 0xfff0cc,
+    damage: 36,
+    speed: 44,
+    radius: 5.2,
+    knockback: 4,
+    note: 'sets the whole corridor on them',
+    reaction: 'Everything loose in the corridor picks a side, and it is yours.',
   },
 ]
+
+/** Spells whose word is short enough to bark under pressure. */
+export function spellsForFloor(floor) {
+  // Floor 1 is tier 1 only; tier 2 joins at floor 2, tier 3 at floor 4. After
+  // that everything is in the bag and the tongue-twisters get more likely.
+  const maxTier = floor >= 4 ? 3 : floor >= 2 ? 2 : 1
+  const pool = SPELLS.filter(s => s.tier <= maxTier)
+  if (maxTier < 3) return pool
+  // Weight the hard ones up as the floors climb, so late game is a mouthful.
+  const extra = Math.min(3, Math.floor((floor - 4) / 2))
+  return pool.concat(...Array.from({ length: extra }, () => SPELLS.filter(s => s.tier === 3)))
+}
 
 /* ── the wand in your hand ─────────────────────────────────────────── */
 
@@ -137,7 +394,7 @@ export class Wand {
 
     // the tip: an emissive bead plus its own light, so it lights your hand
     this.tip = new THREE.Mesh(
-      new THREE.SphereGeometry(0.028, 12, 12),
+      new THREE.SphereGeometry(0.019, 12, 12),
       new THREE.MeshBasicMaterial({ color: 0xfff0cf })
     )
     this.tip.position.y = 0.61
@@ -151,11 +408,14 @@ export class Wand {
         blending: THREE.AdditiveBlending,
       })
     )
-    this.tipGlow.scale.set(0.26, 0.26, 1)
+    // Small on purpose. At 0.26 the sprite plus bloom rendered as a glowing
+    // ball the size of a streetlamp bulb hanging off the end of a stick — the
+    // wand read as a torch, not a wand.
+    this.tipGlow.scale.set(0.1, 0.1, 1)
     this.tipGlow.position.y = 0.61
     this.group.add(this.tipGlow)
 
-    this.tipLight = new THREE.PointLight(0xffd9a0, 1.4, 2.4, 2)
+    this.tipLight = new THREE.PointLight(0xffd9a0, 0.5, 1.5, 2)
     this.tipLight.position.y = 0.64
     this.group.add(this.tipLight)
 
@@ -191,9 +451,9 @@ export class Wand {
     this.group.rotation.x = -0.3 - kick * 0.5 + Math.sin(t * 1.3) * 0.012
     this.group.rotation.z = -0.16 + Math.cos(t * 1.1) * 0.014
 
-    const pulse = 0.17 + this.charge * 0.26 + kick * 0.55 + Math.sin(t * 6) * 0.015
+    const pulse = 0.075 + this.charge * 0.075 + kick * 0.26 + Math.sin(t * 6) * 0.008
     this.tipGlow.scale.set(pulse, pulse, 1)
-    this.tipLight.intensity = 0.9 + this.charge * 2.2 + kick * 9
+    this.tipLight.intensity = 0.35 + this.charge * 0.7 + kick * 4.5
   }
 }
 
