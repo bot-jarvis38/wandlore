@@ -11,98 +11,22 @@ import { buildMaterials } from './textures.js'
 let nextId = 1
 
 /**
- * A bright edge around a shape, so it reads against the dark.
+ * A note on edges, so nobody adds them back a third time.
  *
- * Three independent judges compared this game's combat screens against shipped
- * first-person magic games and all three named the same defect first: the
- * enemies are flat black shapes you cannot make out. They were right, and the
- * cause is that a corridor lit only by distant torches puts almost no light on
- * anything walking down it — the creatures each carry a lamp, but a lamp inside
- * a model lights the room, not the model.
+ * Twice this file tried to make the creatures legible by drawing a bright edge
+ * on them: first an inside-out copy of the mesh scaled up (which gave the cloak
+ * hem a hand-width white band and the head a perfect ring — a sticker), then a
+ * per-pixel graze term added in the fragment shader, absent head-on and
+ * brightest along the silhouette. The second one was better and it was still
+ * wrong: played side by side, the game was preferred without either. Judges
+ * comparing stills liked the graze; the person actually playing did not, and on
+ * a question of taste that is the vote that counts.
  *
- * The first attempt at this drew a slightly larger inside-out copy of the mesh
- * behind the original, so the sliver poking past became an outline. It is a
- * real technique and it was the wrong one here, for a reason worth keeping:
- * scaling a mesh up widens the gap in proportion to how far each vertex sits
- * from the model's origin. On a three-and-a-half metre cloak the hem ended up
- * with a hand-width white band while the head, a small sphere at its own
- * centre, got a perfectly even ring. Read together they looked like a sticker —
- * cheaper than the flat silhouette they replaced.
- *
- * This is what the effect is actually supposed to be: light that grazes. The
- * glow is computed per pixel from how far the surface has turned away from the
- * camera, so it is absent where a surface faces you and brightest exactly along
- * the silhouette, with a real falloff between. It rides the mesh's own normals,
- * which means it follows the Dementor's cloak as its vertices move each frame,
- * and it needs no second mesh to draw.
+ * So there is no edge effect here. The creatures are lit — a lamp for the room
+ * and a key light behind and above each one — and lighting is the only thing
+ * that describes them. If one reads as a flat dark shape, the fix is the key
+ * light or the material's own colour, not a glow drawn on the outline.
  */
-function rimLight(material, color, strength = 0.5, power = 3.2) {
-  // Held out here rather than created inside onBeforeCompile so the same
-  // objects survive on the material after it compiles. That makes the effect
-  // tunable from outside — `tools/probe-rim.mjs` sweeps `power` on the live
-  // build and photographs each setting, which is the only honest way to pick a
-  // number for something whose whole job is how it looks.
-  const uniforms = {
-    rimColor: { value: new THREE.Color(color) },
-    rimStrength: { value: strength },
-    rimPower: { value: power },
-  }
-  material.userData.rim = uniforms
-
-  material.onBeforeCompile = shader => {
-    Object.assign(shader.uniforms, uniforms)
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-         uniform vec3 rimColor;
-         uniform float rimStrength;
-         uniform float rimPower;`
-      )
-      .replace(
-        '#include <dithering_fragment>',
-        `#include <dithering_fragment>
-         float facing = abs(dot(normalize(vNormal), normalize(vViewPosition)));
-         gl_FragColor.rgb += rimColor * pow(1.0 - facing, rimPower) * rimStrength;`
-      )
-  }
-  material.needsUpdate = true
-  return material
-}
-
-/**
- * How hard the graze reads, and how tightly it hugs the silhouette.
- *
- * One pair of numbers rather than two nearly-identical pairs, because they are
- * the knob for a specific complaint — "the monsters look blurry" — and a knob
- * you have to turn in two places gets turned in one.
- *
- * `power` is the exponent on the facing term: it sets how fast the glow dies as
- * a surface turns back toward the camera. Low spreads it over the whole
- * creature as a haze; high pins it to the outline. `strength` is how bright
- * that is.
- *
- * These two were picked by photographing the live build at each setting with
- * the scene frozen and handing the captures to judges who did not build it and
- * were not told which was which (`tools/probe-rim.mjs`, TC-4). The result was
- * not what anyone predicted, so it is worth writing down properly:
- *
- *   Widening the glow was NOT the blur. The obvious fix — tighten the falloff
- *   and leave the brightness alone — was tested first and judged WORSE, twice,
- *   by two judges who never saw each other's answer. The reason is that in a
- *   corridor this dark the rim is not a highlight on top of the lighting, it IS
- *   the lighting: the gradient across the cloak is the only thing separating
- *   one fold panel from the next. Tighten it without raising it and the folds
- *   stop being distinguishable, the creature collapses into one flat dark mass,
- *   and *that* reads as out of focus.
- *
- * So: tight AND bright. The falloff hugs the silhouette, and the edge is lit
- * hard enough to still describe the form. Judged sharper AND easier to find
- * against the dark than what shipped, which is the pair the wide setting was
- * trying and failing to satisfy at once.
- */
-const RIM_STRENGTH = 0.9
-const RIM_POWER = 6.0
 
 /* ── the build kit ─────────────────────────────────────────────────── */
 
@@ -134,8 +58,6 @@ function buildKit() {
 
   const steel = buildMaterials().pewter.clone()
   steel.color.setHex(0x9aa0ab)
-  // warm, because the only thing lighting this corridor is torches
-  rimLight(steel, 0xffa055, RIM_STRENGTH, RIM_POWER)
 
   kit = {
     steel,
@@ -202,7 +124,7 @@ function cloakMaterial() {
     emissiveIntensity: 0.28,
     side: THREE.DoubleSide,
   })
-  return rimLight(mat, 0x9dc0f5, RIM_STRENGTH, RIM_POWER)
+  return mat
 }
 
 /** How long each comedy status holds it, in seconds. */

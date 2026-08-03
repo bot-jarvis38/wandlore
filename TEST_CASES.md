@@ -12,7 +12,7 @@ npx vite --port 5173          # or a deployed URL
 node tools/probe-leak.mjs   http://localhost:5173
 node tools/score-bench.mjs
 node tools/word-audit.mjs
-node tools/probe-rim.mjs    http://localhost:5173 ./shots-rim
+node tools/probe-hitch.mjs  http://localhost:5173
 ```
 
 ---
@@ -90,42 +90,34 @@ is most of the word.
 
 ---
 
-## TC-4 — The creatures are edge-lit, not washed
+## TC-4 — The creatures carry no edge effect
 
-**Complaint it exists for:** "the monsters still look blurry."
+**Complaint it exists for:** "graphics was worse than before the highlights were
+introduced. i like it better before then."
 
-**Tool:** `tools/probe-rim.mjs` — sweeps the rim-light falloff and brightness on
-the live build and photographs each setting.
+**Retired, deliberately, and kept here as the record.** Two versions of a bright
+edge on the creatures shipped and both are gone: an inside-out scaled shell
+(which put a hand-width white band on the cloak hem and a perfect ring on the
+head) and then a per-pixel graze term in the fragment shader, tuned to 0.9 / 6.0
+by a blind judge sweep with the scene frozen.
 
-**The instrument matters here.** The first version left the game running between
-shots, so torches flickered and dust drifted between captures; two independent
-judges came back with contradictory verdicts and one reasoned explicitly about
-the size of the torch bloom, which was not the variable under test. An A/B with
-a moving scene is not an A/B. It now pins the resolution and silences every
-updater — timer, world, particles, wand, gameplay — so consecutive frames differ
-in the rim and nothing else.
+**The judges and the player disagreed, and the player won.** Two judges who
+never saw each other's answers picked the graze as sharper and easier to find
+against the dark. Played rather than photographed, it read as haze — the term is
+additive and sat above the bloom threshold, so every silhouette in a busy frame
+carried a glow. A still of one creature is not the state the effect is used in.
+Where taste is the question, the person playing is the judge that counts.
 
-**Pass:** a judge that did not build it, shown the captures blind with no
-indication which is the candidate, picks the chosen setting on sharpness.
+**Pass:** `grep -c 'onBeforeCompile' src/enemies.js` is 0. The creatures are lit
+by their key lights and nothing is drawn on their outlines.
 
-**The result was not the predicted one, and this is the part worth keeping.**
-The hypothesis going in was that the glow had been widened too far and needed
-tightening. Tightening it *alone* (0.5 / 5.5) was judged **worse** — twice, by
-two judges who never saw each other's answers. In a corridor this dark the rim
-is not a highlight on top of the lighting, it **is** the lighting: the gradient
-across the cloak is the only thing separating one fold panel from the next.
-Tighten without brightening and the folds stop being distinguishable, the
-creature collapses to a flat dark mass, and that reads as out of focus.
-
-Tight **and bright** (0.9 / 6.0) was judged sharper *and* easier to find against
-the dark than what shipped. That is the setting in the code.
-
-**Honest limit:** the judges also called this difference subtle, and both of
-them — unprompted, in both directions — named the same defects underneath it:
-a visibly faceted low-poly hood, flat straight-edged polygon cloak panels with
-no cloth detail, no contact shadow at the floor, and a second creature that is
-not findable on its own silhouette. Those are geometry, not shading. No shader
-value fixes them.
+**What it costs, honestly:** the graze was doing real work — in an unlit corridor
+the gradient across the cloak is much of what separates one fold panel from the
+next, so the Dementor is flatter without it. The right answer to that is the key
+light and the material, not a glow on the edge. The defects underneath were
+never shading anyway: both judges, unprompted, named a faceted low-poly hood,
+flat straight-edged cloak panels with no cloth detail, no contact shadow, and a
+second creature not findable on its own silhouette. Those are geometry.
 
 ---
 
