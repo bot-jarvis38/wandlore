@@ -8,11 +8,22 @@
   --arcane: #7fd8ff;
 }
 
+/*
+ * Nothing in this game is text you read at your leisure, and every pixel of it
+ * is something you drag on. A long press on a phone otherwise brings up the
+ * selection callout — the magnifier, the COPY / LOOK UP / SHARE bubble — over
+ * the corridor, mid-duel, because the browser has no way to know the word under
+ * your thumb is a spell and not a paragraph. `user-select` kills the selection,
+ * `-webkit-touch-callout` kills the bubble that iOS raises even without one.
+ */
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 html,
@@ -27,9 +38,18 @@ body {
   touch-action: none;
 }
 
+/*
+ * `touch-action` is NOT inherited, which is the whole bug. It was set on
+ * <html> and <body> and stopped there, so the canvas the game is actually
+ * dragged on kept the browser default and the drag was still a gesture the
+ * browser thought it might want — a pan, a double-tap zoom, or the press-and-
+ * hold that raises the context menu. It has to be declared on the elements
+ * under the thumb, not on their ancestors.
+ */
 #app {
   position: fixed;
   inset: 0;
+  touch-action: none;
 }
 
 #scene {
@@ -38,6 +58,7 @@ body {
   width: 100%;
   height: 100%;
   display: block;
+  touch-action: none;
 }
 
 /* the whole frame sits inside a lens: vignette + a cold top wash */
@@ -63,6 +84,7 @@ body {
   inset: 0;
   z-index: 10;
   pointer-events: none;
+  touch-action: none;
   padding: calc(env(safe-area-inset-top, 0px) + 16px) 18px
     calc(env(safe-area-inset-bottom, 0px) + 18px);
   display: flex;
