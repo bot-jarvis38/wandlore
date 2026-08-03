@@ -929,8 +929,8 @@ class Game {
     // Timer, not Clock: three deprecated Clock and warns about it on every
     // load. Timer is read rather than sampled — update() once per frame, then
     // getDelta/getElapsed return that same frame's numbers however often they
-    // are asked, which is also why `tools/probe-rim.mjs` can freeze the scene
-    // by simply not updating it.
+    // are asked, which is also how a visual probe freezes the scene for an A/B:
+    // simply stop updating it.
     this.timer.update()
     const raw = this.timer.getDelta()
     const dt = Math.min(0.05, raw)
