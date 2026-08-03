@@ -259,9 +259,18 @@ export class Particles {
 /* ── the bolts themselves ──────────────────────────────────────────── */
 
 export class Projectiles {
-  constructor(scene, particles) {
+  constructor(scene, particles, rig) {
     this.scene = scene
     this.particles = particles
+    /**
+     * Where a bolt's light comes from. It used to own one outright, parented to
+     * the bolt group and added to the scene on every cast — which changed the
+     * scene's light count twice per shot, and a changed light count recompiles
+     * every shader in the scene mid-frame. That was the stutter on firing. The
+     * rig's lights are always in the scene; a bolt borrows one and gives it
+     * back. See `lights.js`.
+     */
+    this.rig = rig
     this.live = []
     this.trailTex = radialSprite()
     /**
@@ -308,10 +317,7 @@ export class Projectiles {
     streak.scale.set(0.38, 2.2, 1)
     group.add(streak)
 
-    const light = new THREE.PointLight(0xffffff, 6, 8, 2)
-    group.add(light)
-
-    return { group, core, halo, streak, light, hits: new Set(), dir: new THREE.Vector3() }
+    return { group, core, halo, streak, light: null, hits: new Set(), dir: new THREE.Vector3() }
   }
 
   spawn(spell, from, direction) {
@@ -320,7 +326,11 @@ export class Projectiles {
     b.core.material.color.setHex(spell.glow)
     b.halo.material.color.setHex(spell.color)
     b.streak.material.color.setHex(spell.color)
-    b.light.color.setHex(spell.color)
+    // Null when every bolt light is already out on a shot in flight. The core,
+    // halo and streak are all emissive, so a bolt without one still reads as a
+    // bolt — it just stops lighting the walls it passes.
+    b.light = this.rig.claim(spell.color, 6, 8)
+    if (b.light) b.light.position.copy(from)
     b.dir.copy(direction).normalize()
     b.hits.clear()
     b.spell = spell
@@ -330,9 +340,11 @@ export class Projectiles {
     this.live.push(b)
   }
 
-  /** Off the screen and back on the shelf. */
+  /** Off the screen and back on the shelf, light included. */
   retire(b) {
     this.scene.remove(b.group)
+    this.rig.release(b.light)
+    b.light = null
     this.pool.push(b)
   }
 
@@ -342,7 +354,10 @@ export class Projectiles {
       b.age += dt
       b.group.position.addScaledVector(b.dir, b.spell.speed * dt)
       b.halo.scale.setScalar(0.85 + Math.sin(b.age * 24) * 0.14)
-      b.light.intensity = 5.5 + Math.sin(b.age * 30) * 1.4
+      if (b.light) {
+        b.light.position.copy(b.group.position)
+        b.light.intensity = 5.5 + Math.sin(b.age * 30) * 1.4
+      }
 
       this.particles.burst(b.group.position, b.spell.color, 2, 0.9, 0.22)
 

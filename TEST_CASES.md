@@ -147,6 +147,68 @@ while one that is truly borderline drops again, re-doubles and still settles.
 
 ---
 
+## TC-7 — Firing a spell compiles nothing
+
+**Complaint it exists for:** "it's frigging laggy when a spell shoots off."
+
+**Tool:** `tools/probe-hitch.mjs` — counts GLSL programs linked and shaders
+compiled **at the WebGL boundary**, per cast, and samples the number of point
+lights in the scene throughout. Three phases: casting into a fight, a bolt alone
+in the corridor so it stays in flight, and the moment it expires.
+
+**Why counts and not milliseconds.** Frame time under headless SwiftShader
+describes the test rig, not a phone. The count of shader compiles is exact and
+identical on every device, and a compile is synchronous — it happens in the
+middle of the frame you are looking at. So the count *is* the stutter.
+
+**Pass:** **0** programs linked across the whole run, and the point-light count
+**constant** from first frame to last. Final line reads `HITCHING: no`.
+
+**Where it was:** 43 point lights at rest with three creatures on screen, and a
+cast linked up to **12 programs / 24 shader compiles** in one frame. three.js
+compiles the scene's light count into every material's program, so a bolt
+carrying its own point light meant firing invalidated every shader in the scene
+— then the bolt expired 2.6s later, the count fell back, and it happened again.
+That second one is why the game also stuttered a beat *after* the shot, with
+nothing on screen to explain it. Every spawn and every death did it too.
+
+**Now:** 24 point lights, constant, and **0 links / 0 compiles** across six
+casts, a bolt in flight and a bolt expiring.
+
+**And in real frames, on real hardware.** The counts say nothing recompiles;
+this says what that is worth. Same machine, same 430×932 viewport, same six
+creatures, 480 frames with a cast every 40, driven through Chrome DevTools
+against a desktop GPU rather than SwiftShader:
+
+| | before | after |
+|---|---|---|
+| median frame | 37.2ms (27fps) | **16.6ms (60fps)** |
+| 95th percentile | 42.7ms | **17.6ms** |
+| worst frame | **1810ms** | 60.5ms |
+| worst frame within 3 frames of a cast | **1810ms** | **17.6ms** |
+| frames over 33ms | 469 of 480 | **1 of 480** |
+
+The 1810ms frame is the complaint, in one number: nearly two seconds of frozen
+picture, and it lands on a cast.
+
+**How.** `src/lights.js` — every dynamic light is allocated once at boot into a
+fixed rig and never added to or removed from the scene; creatures and bolts
+borrow one and hand it back with the brightness at zero. Colour, position and
+intensity are uniforms, and uniforms are free. The corridor's own lighting is
+capped at `LIT_DEPTH` too: it was building a torch and a window light for all 18
+bays of a 96-metre corridor, and 22 of those were beyond their own 11-metre
+range from a camera that never moves — so they cost every lit fragment in the
+frame and lit nothing. Cutting them further, to every *other* near window, was
+tried and reverted: photographed against the shipped build it visibly dims the
+left wall and the floor. The far ones are free to lose; the near ones are not.
+
+**What it costs, deliberately:** the budget is six creature lights and two bolt
+lights. On a crowded floor the creatures past the third walk unlit rather than
+the game buying a stall to light them, and `Game.relight` hands freed slots to
+whatever is nearest the player.
+
+---
+
 ## TC-5 — Clean console
 
 **Tool:** any of the probes; they all fail loudly on `pageerror`.

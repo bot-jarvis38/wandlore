@@ -19,6 +19,25 @@ export const CORRIDOR = {
   bayDepth: 5.2,
 }
 
+/**
+ * How far down the corridor the architecture gets REAL lights.
+ *
+ * Every bay used to get a torch light and a window light, which on a 96-metre
+ * corridor is 36 point lights in the scene before a single creature walks into
+ * it. That number is not a memory cost, it is a per-pixel cost: three.js loops
+ * every point light for every lit fragment, whether or not the light is
+ * anywhere near it, so the corridor was charging the phone for 30 lights it
+ * could not see. Both kinds have a range of 11 metres and the player never
+ * moves from z=2, so past this depth their contribution to the frame was
+ * exactly nothing.
+ *
+ * What stays everywhere is what you actually see at distance: the flame
+ * sprites, the emissive window glass and the additive moonlight shafts all draw
+ * themselves and cost no light at all. So the corridor still recedes into a row
+ * of torches — they simply stop lighting stone that fog has already taken.
+ */
+const LIT_DEPTH = 34
+
 export function buildWorld(scene) {
   const mats = buildMaterials()
   const world = new THREE.Group()
@@ -135,10 +154,17 @@ export function buildWorld(scene) {
     shaft.rotation.y = Math.PI / 2.6
     world.add(shaft)
 
-    const moon = new THREE.PointLight(0x8fb4ff, 3.4, 11, 2)
-    moon.position.set(x + 1.1, 3.4, z)
-    world.add(moon)
-    moonLights.push(moon)
+    // Only the near ones — but every one of them. Dropping to every other
+    // window was tried and photographed against the shipped build: it halves
+    // the blue wash down the left wall and the floor in front of the player,
+    // and the corridor visibly dims. The far ones cost nothing to lose because
+    // they reach nothing; these are load-bearing.
+    if (z > -LIT_DEPTH) {
+      const moon = new THREE.PointLight(0x8fb4ff, 3.4, 11, 2)
+      moon.position.set(x + 1.1, 3.4, z)
+      world.add(moon)
+      moonLights.push(moon)
+    }
   }
 
   // ── torches down the right, the warm key light ───────────────────
@@ -171,10 +197,15 @@ export function buildWorld(scene) {
     flame.position.set(x - 0.28, 3.66, z)
     world.add(flame)
 
-    const light = new THREE.PointLight(0xff9a42, 9, 11, 2)
-    light.position.set(x - 0.6, 3.5, z)
-    world.add(light)
+    let light = null
+    if (z > -LIT_DEPTH) {
+      light = new THREE.PointLight(0xff9a42, 9, 11, 2)
+      light.position.set(x - 0.6, 3.5, z)
+      world.add(light)
+    }
 
+    // The flame flickers whether or not there is a light behind it — that is
+    // the part you see from the far end of the corridor.
     torches.push({ light, flame, seed: Math.random() * 100 })
   }
 
@@ -262,7 +293,7 @@ export function buildWorld(scene) {
           Math.sin(t * 9.1 + seed) * 0.12 +
           Math.sin(t * 23.7 + seed * 2.3) * 0.09 +
           Math.random() * 0.07
-        light.intensity = 9 * f
+        if (light) light.intensity = 9 * f
         flame.scale.set(0.78 + f * 0.2, 1.15 + f * 0.35, 1)
         flame.material.rotation = Math.sin(t * 4 + seed) * 0.12
       }
