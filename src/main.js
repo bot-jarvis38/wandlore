@@ -8,6 +8,7 @@ import './style.css'
 import { buildWorld, CORRIDOR } from './world.js'
 import { SPELLS, spellsForFloor, Wand, Particles, Projectiles } from './spells.js'
 import { Dementor, Armour, Pixie } from './enemies.js'
+import { LightRig } from './lights.js'
 import {
   PREFIX_COVER,
   VoiceListener,
@@ -235,7 +236,21 @@ class Game {
 
     this.world = buildWorld(this.scene)
     this.particles = new Particles(this.scene)
-    this.projectiles = new Projectiles(this.scene, this.particles)
+    /**
+     * The whole dynamic lighting budget, allocated here and never changed.
+     *
+     * Two rigs rather than one shared pool, because they would starve each
+     * other in exactly the wrong direction: a busy floor with every creature
+     * light spoken for would leave the bolts dark, and the bolt is the thing
+     * the player just earned. Splitting them means a cast always lights, and a
+     * creature is what goes without.
+     *
+     * Six creature lights is three fully-lit creatures, or six Pixies. Whatever
+     * is nearest the player gets them — see `relight`.
+     */
+    this.creatureLights = new LightRig(this.scene, 6)
+    this.boltLights = new LightRig(this.scene, 2, { distance: 8 })
+    this.projectiles = new Projectiles(this.scene, this.particles, this.boltLights)
     this.wand = new Wand(this.camera)
     this.sfx = new Sfx()
 
@@ -259,6 +274,7 @@ class Game {
     this.addReticle()
     this.bindInput()
     this.resize()
+    this.prewarm()
     window.addEventListener('resize', () => this.resize())
 
     this.voice = new VoiceListener({
@@ -468,7 +484,51 @@ class Game {
     const Kind = KINDS[kind]
     const lane = (Math.random() - 0.5) * (CORRIDOR.width - 3.4)
     const z = zOverride ?? -CORRIDOR.length * (0.42 + Math.random() * 0.25)
-    this.enemies.push(new Kind(this.scene, z, lane))
+    const enemy = new Kind(this.scene, z, lane)
+    // So that dispose() gives the lights back wherever it is called from, and
+    // there are three such places.
+    enemy.rig = this.creatureLights
+    this.enemies.push(enemy)
+    this.relight()
+  }
+
+  /**
+   * Give the creature light budget to whatever is closest to the player.
+   *
+   * Called on every spawn and every death, and never in between: a light that
+   * is reassigned while both creatures are alive is a light popping off one
+   * shape and onto another, which is far more noticeable than the far one being
+   * dim. So a creature keeps what it holds until it dies, and a freed slot goes
+   * to the nearest thing walking without one.
+   *
+   * Creatures come down the corridor from -z toward the camera at z=2, so
+   * "nearest" is simply the largest z.
+   */
+  relight() {
+    const rig = this.creatureLights
+    if (!rig.spare) return
+    const waiting = this.enemies.filter(e => e.alive && e.unlit)
+    waiting.sort((a, b) => b.group.position.z - a.group.position.z)
+    for (const e of waiting) {
+      if (!rig.spare) break
+      e.claimLights(rig)
+    }
+  }
+
+  /**
+   * Compile every shader the fight needs while the loading screen is still up.
+   *
+   * three.js builds a material's program the first time it draws it, so without
+   * this the first Dementor of the run costs a compile at the moment it walks
+   * into view. One of each kind is built at the far end of the corridor, the
+   * renderer is asked to compile the scene as it stands, and they are thrown
+   * away — their materials come from the shared kit and the recycled cloak
+   * pool, so the programs stay alive for the real ones.
+   */
+  prewarm() {
+    const rehearsal = Object.values(KINDS).map(Kind => new Kind(this.scene, -CORRIDOR.length + 8, 0))
+    this.renderer.compile(this.scene, this.camera)
+    for (const e of rehearsal) e.dispose()
   }
 
   nextSpell() {
@@ -1003,11 +1063,13 @@ class Game {
       this.onSpellHit(spell, enemy, at, back)
     )
 
+    let removed = false
     for (let i = this.enemies.length - 1; i >= 0; i--) {
       const e = this.enemies[i]
       if (!e.alive) {
         e.dispose()
         this.enemies.splice(i, 1)
+        removed = true
         continue
       }
       if (e.update(dt, t, this.camera.position.z)) {
@@ -1015,8 +1077,14 @@ class Game {
         e.alive = false
         e.dispose()
         this.enemies.splice(i, 1)
+        removed = true
+        continue
       }
+      // After update, so the lights land where the model ended the frame
+      // rather than a frame behind it.
+      e.syncLights()
     }
+    if (removed) this.relight()
 
     if (!this.spawnQueue.length && !this.enemies.length && this.health > 0) {
       this.advanceWave()

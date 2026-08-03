@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { radialSprite } from './textures.js'
 import { buildMaterials } from './textures.js'
+import { Lamp } from './lights.js'
 
 /**
  * Three things come down the corridor. Each one has a silhouette you can read
@@ -109,8 +110,27 @@ function buildKit() {
   return kit
 }
 
+/**
+ * Cloak materials, per-Dementor but never thrown away.
+ *
+ * The emissive is driven per creature on damage, so this genuinely cannot be
+ * shared — but disposing it on death was costing a shader compile on the next
+ * spawn. three.js reference-counts compiled programs against the materials
+ * using them and deletes one the moment the last user is disposed, so a wave
+ * that killed its final Dementor and then spawned another rebuilt the cloak
+ * shader from source to draw it. Recycled instead. The pool can never grow past
+ * the most Dementors ever alive at once, which the floor spec bounds.
+ */
+const cloakPool = []
+
 /** The cloak, which is per-Dementor because its emissive is driven on damage. */
 function cloakMaterial() {
+  const spare = cloakPool.pop()
+  if (spare) {
+    spare.emissive.setHex(0x090d1c)
+    spare.emissiveIntensity = 0.28
+    return spare
+  }
   // Was 0x191a26 — 10% grey, which in an unlit corridor renders as pure black
   // no matter what else is done to it. Then it was 0x3c3f57, which
   // over-corrected into bright blue plastic. This sits between: dark enough to
@@ -155,7 +175,43 @@ class Enemy {
      * cloak shader out from under every one still walking.
      */
     this.owned = []
+    /**
+     * Per-creature materials that go back on the shelf instead of being freed —
+     * see `cloakPool`. Disposing them is correct for memory and wrong for
+     * frames, because it takes their compiled shader with them.
+     */
+    this.recycled = []
+    /**
+     * The lights this creature would like. They are `Lamp`s, not lights: a real
+     * light only ever comes from the rig, and only while the budget allows.
+     * Subclasses fill this in their constructor; everything after is generic.
+     */
+    this.lamps = []
     scene.add(this.group)
+  }
+
+  /** Borrow real lights, as far as the budget goes. */
+  claimLights(rig) {
+    for (const lamp of this.lamps) if (!lamp.claim(rig)) break
+  }
+
+  /** Hand them back, so whatever is nearest the player can have them. */
+  releaseLights(rig) {
+    for (const lamp of this.lamps) lamp.release(rig)
+  }
+
+  /** True when this creature is walking on a budget it did not get. */
+  get unlit() {
+    return this.lamps.some(l => !l.light)
+  }
+
+  /**
+   * Put the borrowed lights where the model is, once a frame. The anchors are
+   * children of the group, so this follows walk, sway, rotation and every
+   * comedy status without any of them knowing lights exist.
+   */
+  syncLights() {
+    for (const lamp of this.lamps) lamp.sync()
   }
 
   /**
@@ -246,9 +302,12 @@ class Enemy {
    * endless run that is the whole of the slowdown.
    */
   dispose() {
+    if (this.rig) this.releaseLights(this.rig)
     this.scene.remove(this.group)
     for (const resource of this.owned) resource.dispose()
     this.owned.length = 0
+    for (const mat of this.recycled) cloakPool.push(mat)
+    this.recycled.length = 0
     // Drop the meshes and lights too. They hold references to the shared kit,
     // which is fine, but a detached group that nothing clears keeps its whole
     // subtree alive for as long as anything still points at the enemy object.
@@ -276,7 +335,8 @@ export class Dementor extends Enemy {
     // A ragged cone is the body; the vertices get pushed around every frame, so
     // this geometry is the one thing that genuinely cannot be shared.
     this.cloakGeo = new THREE.ConeGeometry(1.05, 3.5, 44, 16, true)
-    this.owned.push(this.cloakGeo, cloakMat)
+    this.owned.push(this.cloakGeo)
+    this.recycled.push(cloakMat)
     this.baseVerts = this.cloakGeo.attributes.position.array.slice()
     this.cloak = new THREE.Mesh(this.cloakGeo, cloakMat)
     this.cloak.position.y = 1.9
@@ -312,19 +372,18 @@ export class Dementor extends Enemy {
       this.group.add(hand)
     }
 
-    this.light = new THREE.PointLight(0x4f7fd0, 1.7, 6, 2)
-    this.light.position.y = 3.2
-    this.group.add(this.light)
+    this.lamp = new Lamp(this.group, 0x4f7fd0, 1.7, 6, 0, 3.2, 0)
 
     // The lamp above lights the room. This one lights the creature. It sits
     // behind and above rather than out in front: a light in the player's face
     // flattens whatever it hits, which is how the cloak came out looking like a
     // lit-up cone. From back here it catches the shoulders and the top of the
     // hood and leaves the front in shadow, so the shape reads without the thing
-    // ever stopping being dark.
-    this.keyLight = new THREE.PointLight(0xbcd0f0, 1.9, 6, 2)
-    this.keyLight.position.set(0.7, 3.6, -1.9)
-    this.group.add(this.keyLight)
+    // ever stopping being dark. Listed second because the rig is filled in
+    // order and a creature that only gets one light should get the one that
+    // describes its shape.
+    this.keyLamp = new Lamp(this.group, 0xbcd0f0, 1.9, 6, 0.7, 3.6, -1.9)
+    this.lamps.push(this.keyLamp, this.lamp)
 
     this.phase = Math.random() * Math.PI * 2
   }
@@ -371,7 +430,7 @@ export class Dementor extends Enemy {
     this.cloakGeo.computeVertexNormals()
 
     this.eyes.material.opacity = 0.7 + wobble * 0.3
-    this.light.intensity = 1.5 + wobble * 0.4
+    this.lamp.intensity = 1.5 + wobble * 0.4
     if (this.hurt > 0) {
       this.hurt = Math.max(0, this.hurt - dt * 4)
       this.cloak.material.emissive.setHex(0x3a1420).multiplyScalar(this.hurt * 0.6)
@@ -445,13 +504,9 @@ export class Armour extends Enemy {
     this.group.add(blade)
     this.blade = blade
 
-    this.keyLight = new THREE.PointLight(0xffb070, 2.2, 5.5, 2)
-    this.keyLight.position.set(0.5, 2.4, -1.6)
-    this.group.add(this.keyLight)
-
-    this.light = new THREE.PointLight(0xff6a2a, 1.3, 4.5, 2)
-    this.light.position.set(0, 2.3, 0.4)
-    this.group.add(this.light)
+    this.keyLamp = new Lamp(this.group, 0xffb070, 2.2, 5.5, 0.5, 2.4, -1.6)
+    this.lamp = new Lamp(this.group, 0xff6a2a, 1.3, 4.5, 0, 2.3, 0.4)
+    this.lamps.push(this.keyLamp, this.lamp)
 
     this.phase = Math.random() * Math.PI * 2
   }
@@ -474,7 +529,7 @@ export class Armour extends Enemy {
       }
     }
     this.blade.rotation.z = -0.3 + Math.sin(stride * 0.5) * 0.12
-    this.light.intensity = 1.1 + Math.sin(t * 12 + this.phase) * 0.3
+    this.lamp.intensity = 1.1 + Math.sin(t * 12 + this.phase) * 0.3
 
     if (this.hurt > 0) this.hurt = Math.max(0, this.hurt - dt * 4)
     return this.group.position.z > playerZ - 1.4
@@ -513,8 +568,8 @@ export class Pixie extends Enemy {
     this.glow.scale.set(1.5, 1.5, 1)
     this.group.add(this.glow)
 
-    this.light = new THREE.PointLight(0x4fc3ff, 1.7, 4.5, 2)
-    this.group.add(this.light)
+    this.lamp = new Lamp(this.group, 0x4fc3ff, 1.7, 4.5)
+    this.lamps.push(this.lamp)
 
     this.group.position.y = 2.0
     this.phase = Math.random() * Math.PI * 2
