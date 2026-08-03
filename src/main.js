@@ -402,10 +402,31 @@ class Game {
     let lastX = 0
     let lastY = 0
 
+    /**
+     * No context menu, anywhere, ever.
+     *
+     * Holding still for a moment mid-drag is a thing hands do, and on Android
+     * that is a long press: the browser fires `contextmenu` and puts its own
+     * menu over the duel. CSS cannot prevent an event, so this is the half of
+     * the fix that has to be in script — the other half is `touch-action` and
+     * the callout properties in style.css. Bound to the window rather than the
+     * canvas because the HUD sits over the canvas and takes the press itself.
+     */
+    window.addEventListener('contextmenu', e => e.preventDefault())
+
     el.addEventListener('pointerdown', e => {
       dragging = true
       lastX = e.clientX
       lastY = e.clientY
+      // Keeps the look glued to this finger even when it slides over the HUD
+      // or off the edge of the screen, which is otherwise a drag that stops
+      // dead halfway. Wrapped because a browser that cannot capture a pointer
+      // should still turn the camera.
+      try {
+        el.setPointerCapture(e.pointerId)
+      } catch {
+        /* not fatal — the window-level pointerup below still ends the drag */
+      }
     })
     el.addEventListener('pointermove', e => {
       if (!dragging) return

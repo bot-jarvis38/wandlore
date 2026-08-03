@@ -13,6 +13,7 @@ node tools/probe-leak.mjs   http://localhost:5173
 node tools/score-bench.mjs
 node tools/word-audit.mjs
 node tools/probe-hitch.mjs  http://localhost:5173
+node tools/probe-touch.mjs  http://localhost:5173
 ```
 
 ---
@@ -206,6 +207,40 @@ left wall and the floor. The far ones are free to lose; the near ones are not.
 lights. On a crowded floor the creatures past the third walk unlit rather than
 the game buying a stall to light them, and `Game.relight` hands freed slots to
 whatever is nearest the player.
+
+---
+
+## TC-8 — A drag is a drag, not a long press
+
+**Complaint it exists for:** "when you drag around in phone browser, sometimes
+it triggers the long press menu popup."
+
+**Tool:** `tools/probe-touch.mjs`, run against an **iPhone device profile with
+touch**, not a mouse. Reads the gesture properties off the three elements a
+thumb actually lands on, fires a `contextmenu` at the canvas and at the HUD,
+drags the corridor with synthetic pointer events, and tries to select the
+incantation.
+
+**Pass:** `touch-action` and `user-select` are `none` on `#app`, `#scene` and
+`#hud`; `contextmenu` comes back `defaultPrevented`; the drag still turns the
+camera; the HUD text cannot be selected. Final line reads
+`LONG-PRESS SURFACE: clean`.
+
+**Where it was:** 1 of 9. `touch-action: auto` on the canvas, `user-select:
+auto` everywhere, `contextmenu` not prevented, and a drag over the HUD selected
+the word `EPISKEY`.
+
+**The actual bug:** `touch-action` is **not an inherited property.** It was
+declared on `html, body` and stopped there, so the canvas the game is dragged on
+kept the browser default — and a drag that pauses on a default-gesture surface
+is a press-and-hold. Two mechanisms had to be closed separately: iOS raises a
+selection callout, which is CSS (`user-select`, `-webkit-touch-callout`), and
+Android fires a `contextmenu` event, which no CSS property can prevent.
+
+**Honest limit:** Chrome does not implement `-webkit-touch-callout`, so it never
+appears in computed style and iOS — the only browser that raises the callout —
+is the only one that could confirm it. The probe checks that the rule is in the
+shipped stylesheet and says so; the last mile is a real iPhone.
 
 ---
 
