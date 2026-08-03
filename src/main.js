@@ -6,7 +6,7 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js'
 
 import './style.css'
 import { buildWorld, CORRIDOR } from './world.js'
-import { SPELLS, spellsForFloor, Wand, Particles, Projectiles } from './spells.js'
+import { SPELLS, spellsForFloor, Wand, Particles, Projectiles, Shockwave } from './spells.js'
 import { Dementor, Armour, Pixie } from './enemies.js'
 import { LightRig } from './lights.js'
 import {
@@ -64,6 +64,55 @@ const QUALITY_PATIENCE_MAX = 1800
 /** Every resolution the renderer is ever set to passes through here. */
 const qualityClamp = n => Math.min(QUALITY_CEILING, Math.max(QUALITY_FLOOR, n))
 
+/* ── the ultimate ──────────────────────────────────────────────────── */
+
+/**
+ * How many correct incantations fill the meter.
+ *
+ * Measured, not guessed. `tools/probe-pacing.mjs` plays the real game at a
+ * human cadence — aimed, with a few degrees of error — and a floor takes 9 to
+ * 16 casts to clear, climbing as the floors do.
+ *
+ * Six was chosen over seven on the numbers. Seven put 98% of floors in the
+ * asked-for one-to-two band for a fluent player casting every three seconds,
+ * but only 78% for a slower one at four — and the floors it missed were the
+ * early ones, which end before the meter has filled. Six is 100% and 87%.
+ * Where the two ends of the trade-off disagree, this errs toward filling too
+ * fast, because the failure that matters is a floor with NO ultimate in it: a
+ * player who never finds out the feature is there.
+ */
+const ULT_CASTS = 6
+/**
+ * What the wave does to everything it passes. Seventy kills a Pixie (24) and a
+ * Dementor (62) outright and leaves an Armour (96) on 26 — one ordinary spell
+ * from dead. So an ultimate clears the corridor of everything except the heavy
+ * ones, which is a release worth six casts without being a free floor.
+ */
+const ULT_DAMAGE = 70
+const ULT_KNOCKBACK = 3.2
+/** And what an ultimate does to the spell it rides in on. */
+const ULT_BOLT_DAMAGE = 2.2
+const ULT_BOLT_RADIUS = 5.5
+
+/**
+ * Vitality returned when a floor falls silent.
+ *
+ * "The game ends too quick" is mostly this: nothing ever gave any health back,
+ * so a run was a strictly downward line and every hit was permanent. Measured
+ * over eight simulated runs, a competent player finished the first floor on 98,
+ * the second on 66 and the third on 32, and died early in the fourth — three
+ * floors, about 140 seconds. The interlude is already the moment the corridor
+ * goes quiet; this makes it mean something.
+ *
+ * Twenty-two rather than thirty, which was tried and gave the same run length —
+ * the ceiling on a run is the floor table's own ramp, not the size of the
+ * rest — but flattened the middle of it, holding the player at full health
+ * through four floors. At 22 the damage starts sticking from the fifth, so the
+ * later floors cost something and the run still ends: the floors grow faster
+ * than 22 a time can cover, which is what keeps this from being an endless mode.
+ */
+const FLOOR_HEAL = 22
+
 const params = new URLSearchParams(location.search)
 const DEBUG_STATE = params.get('state') // title | play | interlude | gameover
 const DEBUG_POPULATE = params.get('populate') // spawn a specific line-up for a shot
@@ -95,6 +144,10 @@ const ui = {
   micText: $('mic-text'),
   castButton: $('cast-button'),
   damageFlash: $('damage-flash'),
+  ult: $('ult'),
+  ultFill: $('ult-fill'),
+  ultLabel: $('ult-label'),
+  ultFlash: $('ult-flash'),
 }
 
 /* ── waves ─────────────────────────────────────────────────────────── */
@@ -209,6 +262,25 @@ class Sfx {
   fizzle() {
     this.tone(220, 0.18, 'square', 0.05, 110)
   }
+  /** The meter just filled — a clean rising bell, easy to hear mid-fight. */
+  ready() {
+    this.tone(620, 0.26, 'triangle', 0.09, 1240)
+    this.tone(930, 0.34, 'sine', 0.05, 1860)
+  }
+  /** Armed. A small mechanical click, so it is felt rather than announced. */
+  arm() {
+    this.tone(440, 0.09, 'square', 0.05, 760)
+  }
+  /**
+   * And the release. Three layers because one oscillator is a beep: a low
+   * body you feel, a band of noise for the air moving, and a fast rising
+   * sweep on top that reads as the thing leaving the wand.
+   */
+  ultimate() {
+    this.tone(120, 0.95, 'sawtooth', 0.15, 34)
+    this.noise(0.8, 0.3, 260)
+    this.tone(680, 0.5, 'triangle', 0.09, 2400)
+  }
 }
 
 /* ── the game ──────────────────────────────────────────────────────── */
@@ -249,8 +321,11 @@ class Game {
      * is nearest the player gets them — see `relight`.
      */
     this.creatureLights = new LightRig(this.scene, 6)
-    this.boltLights = new LightRig(this.scene, 2, { distance: 8 })
+    // Three, not two: an ultimate spawns a bolt AND the wave, and the wave
+    // going out unlit is the one shot in the game that must never be dim.
+    this.boltLights = new LightRig(this.scene, 3, { distance: 8 })
     this.projectiles = new Projectiles(this.scene, this.particles, this.boltLights)
+    this.shockwave = new Shockwave(this.scene, this.particles, this.boltLights)
     this.wand = new Wand(this.camera)
     this.sfx = new Sfx()
 
@@ -444,6 +519,7 @@ class Game {
     window.addEventListener('pointercancel', up)
 
     ui.castButton.addEventListener('click', () => this.castCurrent('tap'))
+    ui.ult.addEventListener('click', () => this.armUltimate())
     // Tapping the mic readout wakes a stalled engine by hand. On iOS a fresh
     // user gesture is sometimes the only thing that will restart it at all.
     ui.micState.addEventListener('click', () => {
@@ -469,6 +545,9 @@ class Game {
     for (const e of this.enemies) e.dispose()
     this.enemies = []
     this.projectiles.clear()
+    this.shockwave.clear()
+    this.ultCharge = 0
+    this.ultArmed = false
     this.health = 100
     this.score = 0
     this.streak = 0
@@ -482,6 +561,97 @@ class Game {
     clearTimeout(this._deathTimer)
     this.pendingHit = null
     this.speechStartedAt = 0
+    this.updateHud()
+    this.updateUlt()
+  }
+
+  /* ── the ultimate ────────────────────────────────────────────────── */
+
+  get ultReady() {
+    return this.ultCharge >= 1
+  }
+
+  /**
+   * One correct incantation's worth of charge.
+   *
+   * Cast, not kill — which is the request as made, and also the better rule:
+   * charging on kills would pay the player most on the floors where they are
+   * already winning, and nothing at all on the one where they are drowning.
+   * The meter measures how well you are speaking, because that is the game.
+   */
+  gainCharge() {
+    if (this.ultReady) return
+    this.ultCharge = Math.min(1, this.ultCharge + 1 / ULT_CASTS)
+    if (this.ultReady) {
+      this.sfx.ready()
+      this.flashReaction('The wand is full. Loose it when you like.')
+    }
+    this.updateUlt()
+  }
+
+  /** Arm, or think better of it. The next successful cast spends it. */
+  armUltimate() {
+    if (this.state !== 'playing' || !this.ultReady) return
+    this.ultArmed = !this.ultArmed
+    this.sfx.arm()
+    this.updateUlt()
+  }
+
+  updateUlt() {
+    const pct = Math.round(this.ultCharge * 100)
+    ui.ultFill.style.width = `${pct}%`
+    ui.ult.classList.toggle('ready', this.ultReady && !this.ultArmed)
+    ui.ult.classList.toggle('armed', this.ultArmed)
+    ui.ult.disabled = !this.ultReady
+    ui.ultLabel.textContent = this.ultArmed
+      ? 'ARMED — SAY THE WORD'
+      : this.ultReady
+        ? 'ULTIMATE READY — TAP'
+        : `ULTIMATE · ${pct}%`
+  }
+
+  /** The spell the ultimate rides in on, amplified. Plain data, no cost. */
+  amplify(spell) {
+    return {
+      ...spell,
+      damage: Math.round(spell.damage * ULT_BOLT_DAMAGE),
+      radius: Math.max(spell.radius, ULT_BOLT_RADIUS),
+      knockback: (spell.knockback ?? 0) + 2,
+      glow: 0xffffff,
+    }
+  }
+
+  /**
+   * Release: the wave, the flash, and the shove.
+   *
+   * Born a stride and a half out rather than on the wand, for the same reason
+   * the bolts are — at the muzzle the ring is wider than the field of view for
+   * its first frames, so the effect opens on a white screen instead of on a
+   * ring you can see leaving.
+   *
+   * No reaction line here on purpose. The spell's own line lands a tenth of a
+   * second later when the bolt connects and would simply overwrite it, and
+   * between the flash, the sound, the wave and the meter emptying, the game has
+   * already said this four times.
+   */
+  unleash(spell, from, dir) {
+    this.shockwave.fire(from.clone().addScaledVector(dir, 3), spell.color, spell.glow)
+    this.particles.burst(from.clone().addScaledVector(dir, 2.6), 0xffffff, 30, 8, 0.7, dir)
+    this.trauma = 1
+    this.sfx.ultimate()
+    ui.ultFlash.animate([{ opacity: 0.55 }, { opacity: 0 }], {
+      duration: 380,
+      easing: 'ease-out',
+    })
+  }
+
+  /** Everything the wave passes, once each. */
+  onSweepHit(enemy, at) {
+    this.particles.burst(at, 0xffffff, 20, 6, 0.55)
+    const killed = enemy.takeDamage(ULT_DAMAGE)
+    enemy.group.position.z -= ULT_KNOCKBACK
+    if (killed) this.onKill(enemy)
+    else this.score += ULT_DAMAGE
     this.updateHud()
   }
 
@@ -548,7 +718,13 @@ class Game {
    */
   prewarm() {
     const rehearsal = Object.values(KINDS).map(Kind => new Kind(this.scene, -CORRIDOR.length + 8, 0))
+    // `compile` walks the scene with traverseVisible, so anything hidden is
+    // skipped and pays for itself later. The shockwave spends its whole life
+    // hidden except for the second it is used, and that second is the loudest
+    // moment in the game — the worst possible time to stop and build a shader.
+    this.shockwave.rehearse(true)
     this.renderer.compile(this.scene, this.camera)
+    this.shockwave.rehearse(false)
     for (const e of rehearsal) e.dispose()
   }
 
@@ -754,7 +930,17 @@ class Game {
     this.speechStartedAt = 0
     this.heardParts = []
 
-    const spell = this.spell
+    // Armed spends here and nowhere else, so an ultimate can only ever be
+    // released by saying a word correctly — the button arms it, the incantation
+    // fires it. Read before the shot because the shot itself changes.
+    const ultimate = this.ultArmed
+    if (ultimate) {
+      this.ultArmed = false
+      this.ultCharge = 0
+      this.updateUlt()
+    }
+
+    const spell = ultimate ? this.amplify(this.spell) : this.spell
     this.attempts++
     this.landed++
 
@@ -779,6 +965,9 @@ class Game {
     )
     this.trauma = Math.min(1, this.trauma + 0.22)
     this.sfx.cast()
+
+    if (ultimate) this.unleash(spell, from, dir)
+    else this.gainCharge()
 
     ui.incantation.classList.add('success')
     this.renderWord(1)
@@ -922,6 +1111,18 @@ class Game {
 
   advanceWave() {
     this.waveIndex++
+    // The bolts and the wave belong to the floor that fired them; left live,
+    // they arrive during the interlude and sweep an empty corridor.
+    this.projectiles.clear()
+    this.shockwave.clear()
+
+    // A breather. See FLOOR_HEAL — a run with no way back up is why this game
+    // was over in three floors.
+    const before = this.health
+    this.health = Math.min(100, this.health + FLOOR_HEAL)
+    const rested = Math.round(this.health - before)
+    this.updateHud()
+
     const accuracy = this.attempts ? Math.round((this.landed / this.attempts) * 100) : 100
     $('tally-cast').textContent = this.landed
     $('tally-accuracy').textContent = `${accuracy}%`
@@ -930,14 +1131,19 @@ class Game {
       this.waveIndex >= FLOORS.length ? 'STILL STANDING' : 'THE CORRIDOR FALLS SILENT'
     const next = floorSpec(this.waveIndex)
     const harder = this.waveIndex === 1 || this.waveIndex === 3
-    ui.interludeNext.textContent = harder
-      ? `Next: ${next.name.toLowerCase()} — and longer words.`
-      : `Next: ${next.name.toLowerCase()}.`
+    const rest = rested > 0 ? ` You catch your breath — ${rested} vitality back.` : ''
+    ui.interludeNext.textContent =
+      (harder
+        ? `Next: ${next.name.toLowerCase()} — and longer words.`
+        : `Next: ${next.name.toLowerCase()}.`) + rest
     this.show('interlude')
   }
 
   endRun() {
     clearTimeout(this._deathTimer)
+    // tickPlay stops with the run, and the wave is only advanced from there —
+    // left live it hangs in the corridor behind the gameover card.
+    this.shockwave.clear()
     $('final-score').textContent = this.score.toLocaleString()
     $('final-wave').textContent = this.waveIndex + 1
     $('final-best').textContent = this.bestStreak
@@ -1083,6 +1289,7 @@ class Game {
     this.projectiles.update(dt, this.enemies, (spell, enemy, at, back) =>
       this.onSpellHit(spell, enemy, at, back)
     )
+    this.shockwave.update(dt, this.enemies, (enemy, at) => this.onSweepHit(enemy, at))
 
     let removed = false
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -1182,6 +1389,19 @@ function applyDebugState() {
       game.showMatch(0)
     }
   }
+  // ?ult=ready|armed|fired puts the meter in a state a probe or a screenshot
+  // needs, which is otherwise seven correct incantations away.
+  const ult = params.get('ult')
+  if (ult) {
+    game.ultCharge = 1
+    game.ultArmed = ult === 'armed' || ult === 'fired'
+    game.updateUlt()
+    if (ult === 'fired') {
+      game.casting = false
+      game.castCurrent('tap')
+    }
+  }
+
   const said = params.get('say')
   if (said) game.onHeard(said, false)
   const effect = params.get('effect')

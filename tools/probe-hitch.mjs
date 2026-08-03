@@ -140,6 +140,31 @@ for (let i = 1; i <= CASTS; i++) {
   await step(`cast ${i} (in a fight)`)
 }
 
+/* ── 1b. and the ultimate, which is the loudest thing in the game ──── */
+// The one moment the game is trying hardest to look expensive is the worst
+// possible one to stop and build a shader, and the shockwave spends its entire
+// life hidden — which is exactly the shape of object that gets missed by a
+// prewarm, because renderer.compile walks the scene with traverseVisible.
+await p.evaluate(() => {
+  const g = window.__game
+  g.ultCharge = 1
+  g.ultArmed = true
+  g.casting = false
+  g.castCurrent('tap')
+})
+await step('ULTIMATE released')
+await step('…wave mid-corridor')
+await p.evaluate(
+  () =>
+    new Promise(res => {
+      let guard = 900
+      const check = () =>
+        !window.__game.shockwave.busy || --guard <= 0 ? res(true) : requestAnimationFrame(check)
+      requestAnimationFrame(check)
+    })
+)
+await step('…wave spent')
+
 /* ── 2. a bolt alone in the corridor, so it stays in flight ────────── */
 await p.evaluate(() => {
   const g = window.__game

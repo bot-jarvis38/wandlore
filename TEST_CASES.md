@@ -14,6 +14,9 @@ node tools/score-bench.mjs
 node tools/word-audit.mjs
 node tools/probe-hitch.mjs  http://localhost:5173
 node tools/probe-touch.mjs  http://localhost:5173
+node tools/probe-ultimate.mjs http://localhost:5173
+node tools/probe-pacing.mjs http://localhost:5173 3.0 8
+node tools/shot-ultimate.mjs http://localhost:5173 shots   # pictures, not a gate
 ```
 
 ---
@@ -173,8 +176,19 @@ carrying its own point light meant firing invalidated every shader in the scene
 That second one is why the game also stuttered a beat *after* the shot, with
 nothing on screen to explain it. Every spawn and every death did it too.
 
-**Now:** 24 point lights, constant, and **0 links / 0 compiles** across six
-casts, a bolt in flight and a bolt expiring.
+**Now:** 25 point lights, constant, and **0 links / 0 compiles** across six
+casts, an ultimate released and swept, a bolt in flight and a bolt expiring.
+
+**Twenty-five, not twenty-four:** the bolt rig went from two lights to three
+when the ultimate landed, because an ultimate spawns a bolt *and* a shockwave
+and the one shot in the game that must never go out dim is that one. It is a
+constant twenty-five, which is the property that matters.
+
+**The ultimate is in this test on purpose.** It is exactly the shape of object a
+prewarm misses: it spends its whole life hidden, and `renderer.compile` walks
+the scene with `traverseVisible`, so a hidden mesh is skipped and pays for its
+own shader the first time it is shown — which would be the single loudest moment
+in the game. `prewarm` shows it for the one compile and hides it again.
 
 **And in real frames, on real hardware.** The counts say nothing recompiles;
 this says what that is worth. Same machine, same 430×932 viewport, same six
@@ -207,6 +221,100 @@ left wall and the floor. The far ones are free to lose; the near ones are not.
 lights. On a crowded floor the creatures past the third walk unlit rather than
 the game buying a stall to light them, and `Game.relight` hands freed slots to
 whatever is nearest the player.
+
+---
+
+## TC-10 — The ultimate does what the strip says it does
+
+**What it exists for:** TC-9 measures how often you get one. This is the
+behaviour underneath, which a healthy rate would happily report as fine while
+the button did nothing at all.
+
+**Tool:** `tools/probe-ultimate.mjs`. Every step goes through the surface a
+player touches — a real DOM click on the strip, the real cast path — because
+the bug worth catching is the one where the state is perfect and the control is
+not wired to it.
+
+**Pass — 15 of 15:**
+
+- starts empty, and the strip is disabled until it is full
+- six casts fill it to exactly 100%, and a seventh does not overflow
+- full, it says `ULTIMATE READY — TAP` and takes taps; it is not armed yet
+- a tap arms it, and arming alone starts nothing and spends nothing
+- a second tap disarms — you can think better of it
+- the next successful cast spends the charge and the wave goes live
+- everything inside 27m is swept, **once each**, and a creature at 46m is
+  untouched on 62/62
+- an Armour swept for 70 of 96 hp is left on 26 — the design claim, checked
+- an unarmed cast makes no wave and simply charges
+
+**Two assertions in the first draft were worthless, and both are worth
+recording.** One read "every survivor has hp > 0" — which passes on an EMPTY
+array, so it passed hardest in exactly the case it was written to catch
+(everything vaporised). It now tallies hits at `onSweepHit` by creature id,
+which can tell one hit from ten. The other compared the creature count before
+and after arming, in a corridor where bolts from the six charging casts were
+still landing: it failed for reasons that had nothing to do with the button.
+
+**One deliberate rig:** the wand is pointed at the ceiling before the ultimate
+is released. An ultimate fires an amplified bolt **as well as** the wave, and a
+bolt that kills the front creature on its way makes it impossible to say what
+the wave itself did.
+
+---
+
+## TC-9 — A round is long enough to earn one or two ultimates
+
+**Complaint it exists for:** "the game is a little short, ends too quick, users
+not able to cast that many spells before dying" — and the feature request that
+came with it: a meter that fills on every successful cast, a button that arms
+it, and the next successful cast lands as an ultimate. **One or two per round.**
+
+**Tool:** `tools/probe-pacing.mjs` — plays the real game. Not by rendering it:
+under a software renderer the scene draws at about three frames a second and a
+run would take an hour of wall-clock, so the fight is driven directly at a fixed
+timestep with the render loop stopped. The logic is the real logic — the real
+floor table, creatures, projectiles and hit tests. The simulated player casts
+every `castPeriod` seconds, aims at whatever is nearest with a few degrees of
+error, and arms the ultimate the moment it is offered.
+
+**Pass:** at least **90%** of floors give the player **1 or 2** ultimates, at a
+three-second cadence. Reported per floor, not just on average, because a rate
+that averages right can still be zero on the floor you actually reach.
+
+**Now (`ULT_CASTS = 6`):** 100% at a three-second cadence, 87% at four seconds.
+
+**How the number was chosen.** Seven was the first guess and it was measured
+rather than kept: it gave 98% at three seconds but **78%** at four, and every
+floor it missed was an early one that ends before the meter fills. Six is 100%
+and 87%. Where the two ends of that trade-off disagree the tie goes to filling
+too fast, because the failure that matters is a floor with **no** ultimate in
+it — a player who never finds out the feature is there.
+
+**And the length of a run**, same tool, eight runs each:
+
+| cast every | | before | after |
+|---|---|---|---|
+| 3.0s | floors cleared | 3.0 | **7.5** |
+| | spells cast | 46.5 | **98.3** |
+| | seconds survived | 140 | **296** |
+| 4.0s | floors cleared | 2.2 | **3.8** |
+| | spells cast | 25.3 | **39.2** |
+| | seconds survived | 101 | **157** |
+
+**What made it longer, and what did not.** The ultimate is not what doubled the
+run — `FLOOR_HEAL` is. Nothing in the game ever gave health back, so a run was a
+strictly downward line: 98 after the first floor, 66 after the second, 32 after
+the third, dead in the fourth. Thirty a floor was tried and gave the *same* run
+length as twenty-two — the ceiling on a run is the floor table's own ramp, not
+the size of the rest — but it held the player at full health through four
+floors. Twenty-two keeps the damage sticking from the fifth floor on, so the
+later floors cost something, and the run still ends: the floors grow faster than
+22 a time can cover.
+
+**Honest limit:** the simulated player casts on a metronome and never fumbles a
+word. It is a fair instrument for *comparing* two builds and for tuning a rate,
+and it is not a claim about how long your run will be.
 
 ---
 

@@ -44,6 +44,18 @@
           a first-person game cannot afford to cover.
         -->
         <div class="hud-foot">
+          <!--
+            The ultimate meter IS the ultimate button. Two separate controls —
+            a bar that fills somewhere and a button that arms it elsewhere —
+            would make the player look in two places to answer one question,
+            and there is a duel going on. It fills as you cast, and the moment
+            it is full the same strip becomes the thing you press.
+          -->
+          <button id="ult" class="ult" disabled>
+            <span id="ult-fill" class="ult-fill"></span>
+            <span id="ult-label" class="ult-label">ULTIMATE</span>
+          </button>
+
           <div id="incantation" class="incantation">
             <div class="incantation-row">
               <div id="spell-word" class="word">EXPELLIARMUS</div>
@@ -65,6 +77,7 @@
         </div>
 
         <div id="damage-flash" class="damage-flash"></div>
+        <div id="ult-flash" class="ult-flash"></div>
       </div>
 
       <!-- title -->
