@@ -190,6 +190,111 @@ body {
   gap: 10px;
 }
 
+/*
+ * ── the ultimate strip ────────────────────────────────────────────────
+ *
+ * A meter and a button in one element, directly above the incantation so it
+ * sits in the same glance. Dark and quiet while it fills — it must not compete
+ * with the word, which is the thing you are reading — then it lights up and
+ * asks to be pressed, and once armed it pulses until you spend it.
+ */
+.ult {
+  position: relative;
+  width: 100%;
+  height: 34px;
+  padding: 0;
+  display: block;
+  overflow: hidden;
+  border: 1px solid rgba(201, 164, 76, 0.28);
+  border-radius: 3px;
+  background: linear-gradient(180deg, rgba(14, 11, 21, 0.6), rgba(6, 5, 11, 0.8));
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(3px);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ult-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: linear-gradient(90deg, rgba(127, 216, 255, 0.25), rgba(127, 216, 255, 0.5));
+  transition: width 0.28s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+.ult-label {
+  position: relative;
+  display: block;
+  line-height: 32px;
+  font-family: 'Cinzel', serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  color: rgba(232, 220, 192, 0.42);
+  text-shadow: 0 1px 3px #000;
+}
+
+/*
+ * Full — and now it takes taps, which it deliberately does not before.
+ *
+ * The lit background goes on the BUTTON, not on the fill. Putting it on the
+ * fill left the label dark on dark for the length of the fill's own 0.28s
+ * width transition: the bar hits ready, the label flips to dark ink, and the
+ * light bed it needs is still sliding in underneath it. Caught in a capture,
+ * where "ULTIMATE READY — TAP" read as "ULTIMATE R". Lighting the whole
+ * element makes the label's legibility independent of where the fill is.
+ */
+.ult.ready {
+  pointer-events: auto;
+  border-color: rgba(127, 216, 255, 0.85);
+  background: linear-gradient(90deg, rgba(127, 216, 255, 0.62), rgba(216, 245, 255, 0.88));
+  box-shadow: 0 0 30px rgba(127, 216, 255, 0.35), inset 0 0 22px rgba(127, 216, 255, 0.16);
+  animation: ultBreathe 1.5s ease-in-out infinite;
+}
+
+.ult.ready .ult-fill {
+  background: linear-gradient(90deg, rgba(127, 216, 255, 0.55), rgba(216, 245, 255, 0.85));
+}
+
+.ult.ready .ult-label {
+  color: #061018;
+  text-shadow: none;
+}
+
+.ult.armed {
+  pointer-events: auto;
+  border-color: rgba(255, 236, 190, 0.95);
+  background: linear-gradient(90deg, var(--gold), #fff3d2);
+  box-shadow: 0 0 40px rgba(255, 214, 138, 0.5), inset 0 0 26px rgba(255, 214, 138, 0.24);
+  animation: ultBreathe 0.62s ease-in-out infinite;
+}
+
+.ult.armed .ult-fill {
+  background: linear-gradient(90deg, var(--gold), #fff3d2);
+}
+
+.ult.armed .ult-label {
+  color: #1a1206;
+  text-shadow: none;
+}
+
+.ult:active {
+  filter: brightness(0.92);
+}
+
+@keyframes ultBreathe {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.24); }
+}
+
+/* the whole frame goes white for a beat when one goes off */
+.ult-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(ellipse at 50% 52%, rgba(255, 255, 255, 0.9) 0%, rgba(140, 220, 255, 0.5) 38%, rgba(0, 0, 0, 0) 72%);
+}
+
 /* the incantation strip — the actual trigger of the game */
 .incantation {
   width: 100%;

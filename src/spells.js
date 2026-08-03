@@ -386,3 +386,168 @@ export class Projectiles {
     this.live.length = 0
   }
 }
+
+/* ── the ultimate: one wave, the whole corridor ────────────────────── */
+
+/** How far down the corridor the wave reaches before it dies, in metres. */
+const SWEEP_REACH = 27
+/** And how fast it gets there. */
+const SWEEP_SPEED = 30
+/** Widest the ring grows. The corridor is 6.2m across, so this fills it. */
+const SWEEP_RADIUS = 3.3
+/**
+ * And where its centre sits: the middle of a 6.4m corridor, not the height of
+ * the wand. Born at the muzzle the lower half of the ring is under the floor
+ * and what you see is an arch, which reads as scenery — a doorway going past —
+ * rather than a ring of force filling the passage.
+ */
+const SWEEP_HEIGHT = 3.1
+
+/**
+ * The payoff for filling the meter: a ring of force that leaves the wand and
+ * runs the length of the corridor, hitting everything it passes.
+ *
+ * A ring rather than a bigger bolt, on purpose. An ultimate that still has to
+ * be aimed can be missed, and a thing you spent seven correct incantations
+ * earning must not be missable — the seven casts are the skill, the release is
+ * the reward. It also gives the effect a shape the eye can follow: a bolt
+ * scaled up is just a brighter bolt, while a front sweeping away from you
+ * reads as the corridor being cleared, which is what actually happened.
+ *
+ * Built once, at boot, and never rebuilt. Everything here obeys the rule in
+ * lights.js: nothing joins or leaves the scene, the light comes from the rig,
+ * and `prewarm` compiles the material behind the loading screen — otherwise
+ * the first ultimate of the run would pay for a shader compile at the exact
+ * moment the game is trying to look expensive.
+ */
+export class Shockwave {
+  constructor(scene, particles, rig) {
+    this.particles = particles
+    this.rig = rig
+    this.light = null
+    this.age = 0
+    this.life = 0
+
+    this.group = new THREE.Group()
+    this.group.visible = false
+    scene.add(this.group)
+
+    const ringMat = () =>
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      })
+
+    // Two rings: a hard bright front and a softer one trailing it. One ring
+    // alone reads as a hoop; two read as a shock passing through.
+    this.front = new THREE.Mesh(new THREE.TorusGeometry(1, 0.055, 8, 56), ringMat())
+    this.trail = new THREE.Mesh(new THREE.TorusGeometry(1, 0.15, 8, 40), ringMat())
+    this.group.add(this.front, this.trail)
+
+    this.flash = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: radialSprite(),
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      })
+    )
+    this.group.add(this.flash)
+
+    this.hits = new Set()
+  }
+
+  /** Visible for one compile, so the first real one costs nothing. */
+  rehearse(on) {
+    this.group.visible = on
+    if (on) this.group.position.set(0, 1.7, -6)
+  }
+
+  get busy() {
+    return this.age < this.life
+  }
+
+  fire(origin, color, glow) {
+    this.hits.clear()
+    this.age = 0
+    this.life = SWEEP_REACH / SWEEP_SPEED
+    this.startZ = origin.z
+    this.group.position.set(0, SWEEP_HEIGHT, origin.z)
+    this.group.visible = true
+    this.front.material.color.setHex(glow)
+    this.trail.material.color.setHex(color)
+    this.flash.material.color.setHex(color)
+    this.light = this.rig.claim(glow, 9, 24)
+    if (this.light) this.light.position.copy(this.group.position)
+  }
+
+  /**
+   * `onSweep(enemy, at)` fires once per creature, the moment the front reaches
+   * it. Damage is the game's business, not the effect's.
+   */
+  update(dt, enemies, onSweep) {
+    if (!this.busy) return
+    this.age += dt
+    const k = Math.min(1, this.age / this.life)
+
+    this.group.position.z = this.startZ - SWEEP_SPEED * this.age
+    // Opens fast and keeps widening, so it looks like it is being pushed out
+    // rather than inflated at a constant rate.
+    const radius = 0.7 + SWEEP_RADIUS * Math.pow(k, 0.55)
+    const fade = Math.pow(1 - k, 1.6)
+
+    this.front.scale.setScalar(radius)
+    this.trail.scale.setScalar(radius * 0.82)
+    this.front.material.opacity = 0.95 * fade
+    this.trail.material.opacity = 0.5 * fade
+    this.front.rotation.z += dt * 2.4
+    this.trail.rotation.z -= dt * 1.6
+    // The core glow, kept deliberately small and short. The first version
+    // scaled it to 2.6× the ring and held it at 0.45 — an additive white sprite
+    // that size, a metre and a half from the lens and sitting well above the
+    // bloom threshold, does not read as a glow behind the ring. It turns the
+    // whole frame milky and the ring stops being a ring at all.
+    this.flash.scale.setScalar(radius * 1.15)
+    this.flash.material.opacity = 0.3 * Math.pow(1 - k, 3)
+
+    if (this.light) {
+      this.light.position.copy(this.group.position)
+      this.light.intensity = 9 * fade
+    }
+
+    // A little debris on the way through, so the wave interacts with the room.
+    // Every third frame, not every frame — at 60fps the wave otherwise lays
+    // down a hundred additive sprites in under a second and the corridor fills
+    // with what looks like snow.
+    this._debris = (this._debris ?? 0) + 1
+    if (this._debris % 3 === 0) {
+      _v0.set((Math.random() - 0.5) * 5, 0.6 + Math.random() * 3.4, this.group.position.z)
+      this.particles.burst(_v0, this.front.material.color.getHex(), 2, 3.6, 0.4)
+    }
+
+    for (const e of enemies) {
+      if (!e.alive || this.hits.has(e.id)) continue
+      // The front has gone past it. Creatures walk toward the camera from -z,
+      // and the wave runs the other way, so "passed" is the front being at or
+      // beyond the creature's own z.
+      if (this.group.position.z <= e.group.position.z) {
+        this.hits.add(e.id)
+        onSweep(e, e.hitPoint(new THREE.Vector3()))
+      }
+    }
+
+    if (!this.busy) this.clear()
+  }
+
+  clear() {
+    this.group.visible = false
+    this.age = 0
+    this.life = 0
+    this.hits.clear()
+    this.rig.release(this.light)
+    this.light = null
+  }
+}
