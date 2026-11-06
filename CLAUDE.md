@@ -48,12 +48,12 @@ node tools/probe-hitch.mjs     http://localhost:5173   # TC-7 firing a spell com
 node tools/probe-touch.mjs     http://localhost:5173   # TC-8 drag is not a long press
 node tools/probe-pacing.mjs    http://localhost:5173 3.0 8   # TC-9 run length and ultimate rate
 node tools/probe-ultimate.mjs  http://localhost:5173   # TC-10 ultimate contract
-node tools/shoot.mjs           http://localhost:5173 shots   # screenshots of every state (not a gate)
+node tools/shoot.mjs           http://localhost:5173   # screenshots of every state, saved outside the repo (not a gate)
 ```
 
 There is no CI. The console must be clean (TC-5): no errors and no warnings from our code on title, play, interlude and game over.
 
-Screenshots are never committed. `shots*/` is git-ignored; keep test and progress shots outside the repo or in an ignored folder.
+Screenshots are never committed. `tools/shoot.mjs` saves to `$SHOTS_DIR`, else the OS temp folder, never the repo; `shots*/` stays git-ignored as a backstop.
 
 URL parameters for tests and screenshots: `?state=play|interlude|gameover` and `&populate=Pixie,Dementor,Armour`. `window.__game`, `window.__voice` and `window.__allSpells` are exposed for probes.
 

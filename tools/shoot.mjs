@@ -1,6 +1,7 @@
 /**
  * Drives the live build headless and photographs every state the spec names.
  * Run: node tools/shoot.mjs [baseUrl] [outDir]
+ * outDir defaults to $SHOTS_DIR, else <os tmpdir>/hogwarts-duel-shots, never the repo.
  *
  * WebGL needs a real GPU path, so this uses headless Chromium with SwiftShader
  * rather than the old headless shell, and waits a beat on each state so the
@@ -10,10 +11,12 @@
 import { chromium } from 'playwright'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 
 const base = process.argv[2] ?? 'http://localhost:5177'
-const outDir = process.argv[3] ?? './shots'
+const outDir = process.argv[3] ?? process.env.SHOTS_DIR ?? join(tmpdir(), 'hogwarts-duel-shots')
 mkdirSync(outDir, { recursive: true })
+console.log(`screenshots -> ${outDir}`)
 
 const STATES = [
   { name: 'title', query: '' },
