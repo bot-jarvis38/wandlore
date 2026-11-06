@@ -53,6 +53,8 @@ node tools/shoot.mjs           http://localhost:5173 shots   # screenshots of ev
 
 There is no CI. The console must be clean (TC-5): no errors and no warnings from our code on title, play, interlude and game over.
 
+Screenshots are never committed. `shots*/` is git-ignored; keep test and progress shots outside the repo or in an ignored folder.
+
 URL parameters for tests and screenshots: `?state=play|interlude|gameover` and `&populate=Pixie,Dementor,Armour`. `window.__game`, `window.__voice` and `window.__allSpells` are exposed for probes.
 
 ## Where things are
